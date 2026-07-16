@@ -259,8 +259,8 @@ Make sure you have the following installed:
 ## 📥 Clone the Repository
 
 ```bash
-git clone <your-repository-url>
-cd devtinder-backend
+git clone https://github.com/MyselfUjjalRoy/DEVTINDER_BACKEND.git
+cd DEVTINDER_BACKEND
 ```
 
 ---
