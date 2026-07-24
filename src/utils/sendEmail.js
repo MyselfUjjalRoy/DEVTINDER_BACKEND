@@ -4,22 +4,18 @@ const { sesClient } = require("./sesClient");
 const createSendEmailCommand = (toAddress, fromAddress, subject, body) => {
   return new SendEmailCommand({
     Destination: {
+      CcAddresses: [],
       ToAddresses: [toAddress],
     },
     Message: {
       Body: {
         Html: {
           Charset: "UTF-8",
-          Data: `
-            <h2>🤝 New Connection Request</h2>
-            <p>${body}</p>
-            <br/>
-            <p>Thanks for using <b>DevTinder</b>.</p>
-          `,
+          Data: `<h1>${body}</h1>`,
         },
         Text: {
           Charset: "UTF-8",
-          Data: body,
+          Data: "This is the text format email",
         },
       },
       Subject: {
@@ -27,34 +23,34 @@ const createSendEmailCommand = (toAddress, fromAddress, subject, body) => {
         Data: subject,
       },
     },
-    Source: "royu99099@gmail.com",
+    Source: fromAddress,
+    ReplyToAddresses: [],
   });
 };
 
-const run = async (subject, body, recipientEmail) => {
+const run = async (subject, body, toEmailId) => {
   const sendEmailCommand = createSendEmailCommand(
-    recipientEmail,
+    // While SES is in Sandbox, both sender and receiver must be verified.
+    // Uncomment ONE of the following:
+
+    // For testing (recommended while in Sandbox)
+    "royu99099@gmail.com",
+
+    // After SES Production Access, replace the above with:
+    // toEmailId,
+
     "royu99099@gmail.com",
     subject,
     body,
   );
 
   try {
-    const response = await sesClient.send(sendEmailCommand);
-
-    console.log("\n========== EMAIL SENT ==========");
-    console.log("To:", recipientEmail);
-    console.log("Subject:", subject);
-    console.dir(response, { depth: null });
-    console.log("================================\n");
-
-    return response;
-  } catch (err) {
-    console.log("\n========== EMAIL ERROR ==========");
-    console.error(err);
-    console.log("=================================\n");
-
-    throw err;
+    return await sesClient.send(sendEmailCommand);
+  } catch (caught) {
+    if (caught instanceof Error && caught.name === "MessageRejected") {
+      return caught;
+    }
+    throw caught;
   }
 };
 
