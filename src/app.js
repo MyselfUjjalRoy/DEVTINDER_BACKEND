@@ -21,6 +21,8 @@ const app = express();
 const server = http.createServer(app);
 
 // Middleware
+// Stripe Webhook requires raw body Buffer before express.json() parses it
+app.use("/payment/webhook", express.raw({ type: "application/json" }));
 app.use(express.json());
 app.use(cookieParser());
 
