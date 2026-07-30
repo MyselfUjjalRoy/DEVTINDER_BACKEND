@@ -62,6 +62,12 @@ const chatSchema = new mongoose.Schema(
       },
     ],
     messages: [messageSchema],
+    clearedFor: [
+      {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: "User",
+      },
+    ],
   },
   { timestamps: true }
 );

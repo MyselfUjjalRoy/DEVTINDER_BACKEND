@@ -66,6 +66,14 @@ chatRouter.get("/chat/:targetUserId", userAuth, async (req, res) => {
       await chat.save();
     }
 
+    if (chat.clearedFor && chat.clearedFor.some((id) => id.toString() === userId)) {
+      return res.json({
+        messages: [],
+        participants: chat.participants,
+        hasMore: false,
+      });
+    }
+
     const totalMessages = chat.messages.length;
     const startIndex = Math.max(0, totalMessages - page * limit);
     const endIndex = totalMessages - (page - 1) * limit;
@@ -146,6 +154,40 @@ chatRouter.get("/chat/:targetUserId/search", userAuth, async (req, res) => {
     res.json({ messages: matching });
   } catch (error) {
     console.error("Error searching chat:", error);
+    res.status(500).json({ message: "Internal server error" });
+  }
+});
+
+chatRouter.delete("/chat/:targetUserId", userAuth, async (req, res) => {
+  const { targetUserId } = req.params;
+  const userId = req.user._id;
+
+  try {
+    if (
+      !mongoose.Types.ObjectId.isValid(userId) ||
+      !mongoose.Types.ObjectId.isValid(targetUserId)
+    ) {
+      return res.status(400).json({ message: "Invalid user IDs" });
+    }
+
+    const userObjectId = new mongoose.Types.ObjectId(userId);
+    const targetUserObjectId = new mongoose.Types.ObjectId(targetUserId);
+
+    const chat = await Chat.findOne({
+      participants: { $all: [userObjectId, targetUserObjectId] },
+    });
+
+    if (!chat) {
+      return res.status(404).json({ message: "Chat not found" });
+    }
+
+    await Chat.findByIdAndUpdate(chat._id, {
+      $addToSet: { clearedFor: userObjectId },
+    });
+
+    res.json({ message: "Chat deleted successfully" });
+  } catch (error) {
+    console.error("Error deleting chat:", error);
     res.status(500).json({ message: "Internal server error" });
   }
 });
