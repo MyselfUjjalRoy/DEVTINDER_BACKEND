@@ -84,4 +84,37 @@ chatRouter.get("/chat/:targetUserId", userAuth, async (req, res) => {
   }
 });
 
+chatRouter.get("/chats/unread", userAuth, async (req, res) => {
+  const userId = req.user._id;
+
+  try {
+    const chats = await Chat.find({
+      participants: userId,
+    });
+
+    const unreadMap = {};
+    for (const chat of chats) {
+      const partnerId = chat.participants.find(
+        (p) => p.toString() !== userId.toString()
+      );
+      if (!partnerId) continue;
+
+      const count = chat.messages.filter(
+        (m) =>
+          m.senderId.toString() === partnerId.toString() &&
+          m.status !== "read"
+      ).length;
+
+      if (count > 0) {
+        unreadMap[partnerId.toString()] = count;
+      }
+    }
+
+    res.json({ unreadMap });
+  } catch (error) {
+    console.error("Error fetching unread counts:", error);
+    res.status(500).json({ message: "Internal server error" });
+  }
+});
+
 module.exports = chatRouter;
