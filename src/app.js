@@ -3,6 +3,7 @@ require("./utils/cronJobs");
 
 const express = require("express");
 const http = require("http");
+const path = require("path");
 const connectDB = require("./config/database");
 const cookieParser = require("cookie-parser");
 const cors = require("cors");
@@ -14,14 +15,12 @@ const requestRouter = require("./routes/request");
 const userRouter = require("./routes/user");
 const paymentRouter = require("./routes/payment");
 const chatRouter = require("./routes/chat");
+const uploadRouter = require("./routes/upload");
 
 const app = express();
 
-// Create HTTP server for Socket.io
 const server = http.createServer(app);
 
-// Middleware
-// Stripe Webhook requires raw body Buffer before express.json() parses it
 app.use("/payment/webhook", express.raw({ type: "application/json" }));
 app.use(express.json());
 app.use(cookieParser());
@@ -35,14 +34,16 @@ app.use(
   })
 );
 
+app.use("/uploads", express.static(path.join(__dirname, "..", "uploads")));
+
 app.use("/", authRouter);
 app.use("/", profileRouter);
 app.use("/", requestRouter);
 app.use("/", userRouter);
 app.use("/", paymentRouter);
 app.use("/", chatRouter);
+app.use("/", uploadRouter);
 
-// Initialize Socket.io
 initializeSocket(server);
 
 connectDB()

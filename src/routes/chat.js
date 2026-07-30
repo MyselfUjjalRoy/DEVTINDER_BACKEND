@@ -117,4 +117,37 @@ chatRouter.get("/chats/unread", userAuth, async (req, res) => {
   }
 });
 
+chatRouter.get("/chat/:targetUserId/search", userAuth, async (req, res) => {
+  const { targetUserId } = req.params;
+  const userId = req.user._id;
+  const query = req.query.q;
+
+  if (!query || !query.trim()) {
+    return res.status(400).json({ message: "Search query is required" });
+  }
+
+  try {
+    const chat = await Chat.findOne({
+      participants: { $all: [userId, targetUserId] },
+    }).populate({
+      path: "messages.senderId",
+      select: "firstName lastName photoURL",
+    });
+
+    if (!chat) {
+      return res.json({ messages: [] });
+    }
+
+    const regex = new RegExp(query.trim(), "i");
+    const matching = chat.messages.filter(
+      (m) => !m.isDeleted && m.text && regex.test(m.text)
+    );
+
+    res.json({ messages: matching });
+  } catch (error) {
+    console.error("Error searching chat:", error);
+    res.status(500).json({ message: "Internal server error" });
+  }
+});
+
 module.exports = chatRouter;

@@ -1,5 +1,20 @@
 const mongoose = require("mongoose");
 
+const reactionSchema = new mongoose.Schema(
+  {
+    userId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "User",
+      required: true,
+    },
+    emoji: {
+      type: String,
+      required: true,
+    },
+  },
+  { _id: false }
+);
+
 const messageSchema = new mongoose.Schema(
   {
     senderId: {
@@ -9,12 +24,29 @@ const messageSchema = new mongoose.Schema(
     },
     text: {
       type: String,
-      required: true,
+      default: "",
     },
     status: {
       type: String,
       enum: ["sent", "delivered", "read"],
       default: "sent",
+    },
+    isDeleted: {
+      type: Boolean,
+      default: false,
+    },
+    deletedFor: [
+      {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: "User",
+      },
+    ],
+    reactions: [reactionSchema],
+    attachment: {
+      url: { type: String },
+      type: { type: String },
+      name: { type: String },
+      size: { type: Number },
     },
   },
   { timestamps: true }

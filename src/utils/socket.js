@@ -46,7 +46,6 @@ const initializeSocket = (server) => {
         const roomId = getSecretRoomId(userId, targetUserId);
         socket.join(roomId);
 
-        // mark undelivered messages from the other user as delivered
         const chat = await Chat.findOne({
           participants: { $all: [userId, targetUserId] },
         });
@@ -73,9 +72,10 @@ const initializeSocket = (server) => {
       }
     });
 
-    socket.on("sendMessage", async ({ targetUserId, text }) => {
+    socket.on("sendMessage", async ({ targetUserId, text, attachment }) => {
       try {
-        if (!targetUserId || !text || !text.trim()) return;
+        if (!targetUserId) return;
+        if (!text && !attachment) return;
         const roomId = getSecretRoomId(userId, targetUserId);
         const connection = await verifyMatch(userId, targetUserId);
         if (!connection) {
@@ -92,15 +92,17 @@ const initializeSocket = (server) => {
         }
         const newMessage = {
           senderId: userId,
-          text: text.trim(),
+          text: (text || "").trim(),
           status: "sent",
         };
+        if (attachment) {
+          newMessage.attachment = attachment;
+        }
         chat.messages.push(newMessage);
         await chat.save();
 
         const savedMsg = chat.messages[chat.messages.length - 1];
 
-        // if target user is online, mark as delivered immediately
         if (onlineUsers.has(targetUserId) && onlineUsers.get(targetUserId).size > 0) {
           savedMsg.status = "delivered";
           await chat.save();
@@ -117,8 +119,9 @@ const initializeSocket = (server) => {
             lastName: socket.user.lastName,
             photoURL: socket.user.photoURL,
           },
-          text: text.trim(),
+          text: (text || "").trim(),
           status: savedMsg.status,
+          attachment: attachment || null,
           createdAt: new Date(),
         });
       } catch (err) {
@@ -154,6 +157,98 @@ const initializeSocket = (server) => {
         }
       } catch (err) {
         console.error("messageRead error:", err);
+      }
+    });
+
+    socket.on("typing", async ({ targetUserId }) => {
+      try {
+        if (!targetUserId) return;
+        const roomId = getSecretRoomId(userId, targetUserId);
+        socket.to(roomId).emit("userTyping", {
+          userId,
+          firstName: socket.user.firstName,
+        });
+      } catch (err) {
+        console.error("typing error:", err);
+      }
+    });
+
+    socket.on("stopTyping", async ({ targetUserId }) => {
+      try {
+        if (!targetUserId) return;
+        const roomId = getSecretRoomId(userId, targetUserId);
+        socket.to(roomId).emit("userStoppedTyping", {
+          userId,
+        });
+      } catch (err) {
+        console.error("stopTyping error:", err);
+      }
+    });
+
+    socket.on("messageReaction", async ({ messageId, targetUserId, emoji }) => {
+      try {
+        if (!messageId || !targetUserId || !emoji) return;
+        const roomId = getSecretRoomId(userId, targetUserId);
+        const chat = await Chat.findOne({
+          participants: { $all: [userId, targetUserId] },
+        });
+        if (!chat) return;
+
+        const msg = chat.messages.id(messageId);
+        if (!msg) return;
+
+        const existingIdx = msg.reactions.findIndex(
+          (r) => r.userId.toString() === userId
+        );
+        if (existingIdx > -1) {
+          if (msg.reactions[existingIdx].emoji === emoji) {
+            msg.reactions.splice(existingIdx, 1);
+          } else {
+            msg.reactions[existingIdx].emoji = emoji;
+          }
+        } else {
+          msg.reactions.push({ userId: userId, emoji });
+        }
+
+        await chat.save();
+
+        io.to(roomId).emit("messageReacted", {
+          messageId,
+          userId,
+          emoji,
+          reactions: msg.reactions,
+        });
+      } catch (err) {
+        console.error("messageReaction error:", err);
+      }
+    });
+
+    socket.on("deleteMessage", async ({ messageId, targetUserId, deleteFor }) => {
+      try {
+        if (!messageId || !targetUserId) return;
+        const roomId = getSecretRoomId(userId, targetUserId);
+        const chat = await Chat.findOne({
+          participants: { $all: [userId, targetUserId] },
+        });
+        if (!chat) return;
+
+        const msg = chat.messages.id(messageId);
+        if (!msg) return;
+        if (msg.senderId.toString() !== userId) return;
+
+        if (deleteFor === "me") {
+          if (!msg.deletedFor.includes(userId)) {
+            msg.deletedFor.push(userId);
+          }
+          await chat.save();
+          socket.emit("messageDeleted", { messageId, deleteFor: "me" });
+        } else {
+          msg.isDeleted = true;
+          await chat.save();
+          io.to(roomId).emit("messageDeleted", { messageId, deleteFor: "everyone" });
+        }
+      } catch (err) {
+        console.error("deleteMessage error:", err);
       }
     });
 
