@@ -1,4 +1,5 @@
 const express = require("express");
+const mongoose = require("mongoose");
 const userRouter = express.Router();
 
 const { userAuth } = require("../middlewares/auth");
@@ -85,15 +86,46 @@ userRouter.get("/feed", userAuth, async (req, res) => {
       hiddenUsersFromFeed.add(req.toUserId.toString());
     });
 
-    const usersInFeed = await User.find({
-      $and: [
-        { _id: { $nin: Array.from(hiddenUsersFromFeed) } },
-        { _id: { $ne: loggedInUser._id } },
-      ],
-    })
-      .select(USER_SAFE_DATA)
-      .skip(skipUsers)
-      .limit(limit);
+    const hiddenIds = Array.from(hiddenUsersFromFeed).map(
+      (id) => new mongoose.Types.ObjectId(id),
+    );
+    hiddenIds.push(loggedInUser._id);
+
+    const loggedInGender = String(loggedInUser.gender || "").toLowerCase();
+    const preferField =
+      loggedInGender === "male"
+        ? "Female"
+        : loggedInGender === "female"
+          ? "Male"
+          : null;
+
+    const usersInFeed = await User.aggregate([
+      { $match: { _id: { $nin: hiddenIds } } },
+      {
+        $addFields: {
+          _genderPreference: preferField
+            ? {
+                $cond: {
+                  if: {
+                    $eq: [{ $toLower: "$gender" }, preferField.toLowerCase()],
+                  },
+                  then: 0,
+                  else: 1,
+                },
+              }
+            : 1,
+          _rand: { $rand: {} },
+        },
+      },
+      { $sort: { _genderPreference: 1, _rand: 1 } },
+      { $skip: skipUsers },
+      { $limit: limit },
+      {
+        $project: Object.fromEntries(
+          USER_SAFE_DATA.split(" ").map((field) => [field, 1]),
+        ),
+      },
+    ]);
 
     res.send(usersInFeed);
   } catch (err) {
