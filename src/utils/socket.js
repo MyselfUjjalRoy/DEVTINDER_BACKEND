@@ -6,6 +6,11 @@ const { socketAuth } = require("../middlewares/auth");
 
 const onlineUsers = new Map();
 
+const isUserOnline = (userId) => {
+  const id = userId.toString();
+  return onlineUsers.has(id) && onlineUsers.get(id).size > 0;
+};
+
 const getSecretRoomId = (userId, targetUserId) => {
   return crypto
     .createHash("sha256")
@@ -39,6 +44,14 @@ const initializeSocket = (server) => {
     onlineUsers.get(userId).add(socket.id);
     socket.join(userId);
     socket.broadcast.emit("user:online", { userId });
+
+    socket.on("checkUserOnline", ({ userId: checkUserId }) => {
+      if (!checkUserId) return;
+      socket.emit("userOnlineStatus", {
+        userId: checkUserId.toString(),
+        online: isUserOnline(checkUserId),
+      });
+    });
 
     socket.on("joinChat", async ({ targetUserId }) => {
       try {
@@ -103,7 +116,7 @@ const initializeSocket = (server) => {
 
         const savedMsg = chat.messages[chat.messages.length - 1];
 
-        if (onlineUsers.has(targetUserId) && onlineUsers.get(targetUserId).size > 0) {
+        if (isUserOnline(targetUserId)) {
           savedMsg.status = "delivered";
           await chat.save();
         }
