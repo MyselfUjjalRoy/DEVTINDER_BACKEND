@@ -22,7 +22,7 @@ const storage = multer.diskStorage({
 });
 
 const fileFilter = (req, file, cb) => {
-  const allowedTypes = /jpeg|jpg|png|gif|webp|svg|bmp|ico|pdf|doc|docx|txt|csv|xlsx|zip|mp4|mp3/;
+  const allowedTypes = /jpeg|jpg|png|gif|webp|svg|bmp|ico|pdf|doc|docx|txt|csv|xlsx|zip|mp4|mp3|webm|ogg/;
   const ext = path.extname(file.originalname).toLowerCase().slice(1);
   if (allowedTypes.test(ext)) {
     cb(null, true);
@@ -50,10 +50,11 @@ uploadRouter.post("/upload", userAuth, (req, res) => {
     }
 
     const isImage = req.file.mimetype.startsWith("image/");
+    const isAudio = req.file.mimetype.startsWith("audio/");
 
     res.json({
       url: "/uploads/" + req.file.filename,
-      type: isImage ? "image" : "file",
+      type: isImage ? "image" : isAudio ? "audio" : "file",
       name: req.file.originalname,
       size: req.file.size,
     });
