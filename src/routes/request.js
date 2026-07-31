@@ -6,6 +6,9 @@ const ConnectionRequest = require("../models/connectionRequest");
 const User = require("../models/user");
 
 const sendEmail = require("../utils/sendEmail");
+const { getIO } = require("../utils/io");
+const { notifyUser } = require("../utils/notifications");
+const { toSafeUser, USER_SAFE_DATA } = require("../utils/userSafeData");
 
 requestRouter.post(
   "/request/send/:status/:toUserId",
@@ -93,6 +96,19 @@ requestRouter.post(
         }
       }
 
+      if (status === "interested") {
+        await notifyUser({
+          userId: toUser._id,
+          fromUserId,
+          type: "connection_request",
+          message: `${req.user.firstName}${
+            req.user.lastName ? " " + req.user.lastName : ""
+          } sent you a connection request.`,
+          link: "/requests",
+          actor: toSafeUser(req.user),
+        });
+      }
+
       res.json({
         message: `${req.user.firstName} ${status} ${toUser.firstName}`,
         data,
@@ -132,6 +148,40 @@ requestRouter.post(
       connectionRequest.status = status;
 
       const data = await connectionRequest.save();
+
+      if (status === "accepted") {
+        await connectionRequest.populate("fromUserId", USER_SAFE_DATA);
+
+        const fromUser = connectionRequest.fromUserId;
+        const matchData = {
+          requestId: connectionRequest._id,
+          users: [toSafeUser(fromUser), toSafeUser(loggedInUser)],
+        };
+
+        const io = getIO();
+        io.to(fromUser._id.toString()).emit("matched", matchData);
+        io.to(loggedInUser._id.toString()).emit("matched", matchData);
+
+        await notifyUser({
+          userId: fromUser._id,
+          fromUserId: loggedInUser._id,
+          type: "match",
+          message: `${loggedInUser.firstName}${
+            loggedInUser.lastName ? " " + loggedInUser.lastName : ""
+          } accepted your connection request. It's a match!`,
+          link: "/connections",
+          actor: toSafeUser(loggedInUser),
+        });
+      } else if (status === "rejected") {
+        await notifyUser({
+          userId: connectionRequest.fromUserId,
+          fromUserId: loggedInUser._id,
+          type: "connection_rejected",
+          message: `${loggedInUser.firstName} declined your connection request.`,
+          link: "/feed",
+          actor: toSafeUser(loggedInUser),
+        });
+      }
 
       res.json({ message: "Connection request " + status, data });
     } catch (err) {

@@ -16,6 +16,7 @@ const userRouter = require("./routes/user");
 const paymentRouter = require("./routes/payment");
 const chatRouter = require("./routes/chat");
 const uploadRouter = require("./routes/upload");
+const notificationRouter = require("./routes/notification");
 
 const app = express();
 
@@ -43,6 +44,7 @@ app.use("/", userRouter);
 app.use("/", paymentRouter);
 app.use("/", chatRouter);
 app.use("/", uploadRouter);
+app.use("/", notificationRouter);
 
 initializeSocket(server);
 

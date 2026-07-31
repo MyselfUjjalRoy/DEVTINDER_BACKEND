@@ -3,6 +3,8 @@ const crypto = require("crypto");
 const Chat = require("../models/chat");
 const ConnectionRequest = require("../models/connectionRequest");
 const { socketAuth } = require("../middlewares/auth");
+const { setIO } = require("./io");
+const { notifyUser } = require("./notifications");
 
 const onlineUsers = new Map();
 
@@ -34,6 +36,8 @@ const initializeSocket = (server) => {
       credentials: true,
     },
   });
+
+  setIO(io);
 
   io.use(socketAuth);
 
@@ -119,6 +123,15 @@ const initializeSocket = (server) => {
         if (isUserOnline(targetUserId)) {
           savedMsg.status = "delivered";
           await chat.save();
+        } else {
+          await notifyUser({
+            userId: targetUserId,
+            fromUserId: userId,
+            type: "message",
+            message: `New message from ${socket.user.firstName}`,
+            link: `/chat/${targetUserId}`,
+            actor: socket.user,
+          });
         }
 
         io.to(roomId).emit("messageReceived", {
