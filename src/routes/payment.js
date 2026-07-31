@@ -34,7 +34,9 @@ paymentRouter.post("/payment/createProduct", userAuth, async (req, res) => {
     });
 
     const clientUrl =
-      req.get("origin") || process.env.CLIENT_URL || "https://devtinder-new.indevs.in";
+      req.get("origin") ||
+      process.env.CLIENT_URL ||
+      "https://devtinder-new.indevs.in";
 
     // Create Stripe Checkout Session
     const session = await stripeInstance.checkout.sessions.create({
@@ -95,7 +97,11 @@ paymentRouter.post("/payment/webhook", async (req, res) => {
   try {
     const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET;
     if (webhookSecret) {
-      event = stripeInstance.webhooks.constructEvent(req.body, sig, webhookSecret);
+      event = stripeInstance.webhooks.constructEvent(
+        req.body,
+        sig,
+        webhookSecret,
+      );
     } else {
       // Fallback if secret not configured yet in dev
       event = typeof req.body === "string" ? JSON.parse(req.body) : req.body;
@@ -155,7 +161,9 @@ paymentRouter.post("/payment/verify", userAuth, async (req, res) => {
   try {
     const { sessionId } = req.body;
     if (!sessionId) {
-      return res.status(400).json({ success: false, message: "Session ID required" });
+      return res
+        .status(400)
+        .json({ success: false, message: "Session ID required" });
     }
 
     const session = await stripeInstance.checkout.sessions.retrieve(sessionId);
@@ -178,7 +186,9 @@ paymentRouter.post("/payment/verify", userAuth, async (req, res) => {
       }
     }
 
-    return res.status(400).json({ success: false, message: "Payment not completed" });
+    return res
+      .status(400)
+      .json({ success: false, message: "Payment not completed" });
   } catch (err) {
     console.error("Payment verification error:", err);
     return res.status(500).json({ success: false, error: err.message });

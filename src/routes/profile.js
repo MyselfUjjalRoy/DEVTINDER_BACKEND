@@ -1,7 +1,11 @@
 const express = require("express");
 const { userAuth } = require("../middlewares/auth");
-const { validateProfileEditData } = require("../utils/validation");
+const {
+  validateProfileEditData,
+  sanitizeEditableFields,
+} = require("../utils/validation");
 const bcrypt = require("bcrypt");
+const validator = require("validator");
 
 const profileRouter = express.Router();
 
@@ -16,15 +20,16 @@ profileRouter.get("/profile/view", userAuth, async (req, res) => {
 profileRouter.patch("/profile/edit", userAuth, async (req, res) => {
   try {
     //validate profile Edit Data
-    if (!validateProfileEditData(req)) {
-      throw new Error("Invalid Edit Request");
-      //return req.status(400).send("Invalid Edit Request");
-    }
+    validateProfileEditData(req);
 
     const loggedInUser = req.user;
 
+    // Only whitelisted, sanitized fields are applied. Email, password,
+    // membership etc. can never be modified through this endpoint.
+    const updates = sanitizeEditableFields(req.body);
+
     //For each key/field in the request body, make it equal to the loggedIn user
-    Object.keys(req.body).forEach((key) => (loggedInUser[key] = req.body[key]));
+    Object.keys(updates).forEach((key) => (loggedInUser[key] = updates[key]));
 
     await loggedInUser.save();
 

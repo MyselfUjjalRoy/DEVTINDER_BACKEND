@@ -33,7 +33,8 @@ const userSchema = new mongoose.Schema(
     },
     age: {
       type: Number,
-      min: 21,
+      min: 15,
+      max: 100,
     },
     gender: {
       type: String,
@@ -59,6 +60,127 @@ const userSchema = new mongoose.Schema(
     },
     skills: {
       type: [String],
+    },
+    location: {
+      city: {
+        type: String,
+        trim: true,
+        maxLength: 100,
+      },
+      country: {
+        type: String,
+        trim: true,
+        maxLength: 100,
+      },
+    },
+    hobbies: {
+      type: [String],
+    },
+    likes: {
+      type: [String],
+    },
+    dislikes: {
+      type: [String],
+    },
+    photos: {
+      type: [String],
+      validate: {
+        validator: (value) => value.length <= 3,
+        message: "You can add at most 3 photos",
+      },
+    },
+    isStudent: {
+      type: Boolean,
+      default: true,
+    },
+    education: {
+      college: {
+        type: String,
+        trim: true,
+        maxLength: 150,
+      },
+      degree: {
+        type: String,
+        trim: true,
+        maxLength: 150,
+      },
+      passingYear: {
+        type: Number,
+      },
+      cgpa: {
+        type: Number,
+        min: 0,
+        max: 10,
+      },
+    },
+    work: {
+      company: {
+        type: String,
+        trim: true,
+        maxLength: 150,
+      },
+      role: {
+        type: String,
+        trim: true,
+        maxLength: 150,
+      },
+      experienceYears: {
+        type: Number,
+        min: 0,
+        max: 60,
+      },
+    },
+    codingProfiles: {
+      leetcode: {
+        type: String,
+        trim: true,
+        maxLength: 500,
+      },
+      gfg: {
+        type: String,
+        trim: true,
+        maxLength: 500,
+      },
+      codeforces: {
+        type: String,
+        trim: true,
+        maxLength: 500,
+      },
+      codechef: {
+        type: String,
+        trim: true,
+        maxLength: 500,
+      },
+      hackerrank: {
+        type: String,
+        trim: true,
+        maxLength: 500,
+      },
+      codingninjas: {
+        type: String,
+        trim: true,
+        maxLength: 500,
+      },
+    },
+    github: {
+      type: String,
+      trim: true,
+      maxLength: 500,
+    },
+    linkedin: {
+      type: String,
+      trim: true,
+      maxLength: 500,
+    },
+    portfolio: {
+      type: String,
+      trim: true,
+      maxLength: 500,
+    },
+    resumeURL: {
+      type: String,
+      trim: true,
+      maxLength: 500,
     },
   },
   {
