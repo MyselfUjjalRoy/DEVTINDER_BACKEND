@@ -36,6 +36,7 @@ app.use(
 );
 
 app.use("/uploads", express.static(path.join(__dirname, "..", "uploads")));
+app.use("/api/uploads", express.static(path.join(__dirname, "..", "uploads")));
 
 app.use("/", authRouter);
 app.use("/", profileRouter);
