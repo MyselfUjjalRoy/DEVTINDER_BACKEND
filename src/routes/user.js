@@ -5,6 +5,7 @@ const userRouter = express.Router();
 const { userAuth } = require("../middlewares/auth");
 const ConnectionRequest = require("../models/connectionRequest");
 const User = require("../models/user");
+const { toSafeUser } = require("../utils/userSafeData");
 
 const USER_SAFE_DATA =
   "firstName lastName photoURL photos age dob gender about skills " +
@@ -29,6 +30,57 @@ userRouter.get("/user/requests/received", userAuth, async (req, res) => {
     res.json({ message: "Data Sent Successfully", data: connectionRequests });
   } catch (err) {
     req.statusCode(400).send("ERROR: " + err.message);
+  }
+});
+
+//View any user's full profile with the viewer's relationship to them
+userRouter.get("/user/profile/:userId", userAuth, async (req, res) => {
+  try {
+    const viewerId = req.user._id;
+    const targetId = req.params.userId;
+
+    if (!mongoose.Types.ObjectId.isValid(targetId)) {
+      return res.status(400).json({ message: "Invalid user id" });
+    }
+
+    const target = await User.findById(targetId);
+    if (!target) {
+      return res.status(404).json({ message: "User not found" });
+    }
+
+    let relationship = "stranger";
+    let requestId = null;
+
+    if (targetId.toString() === viewerId.toString()) {
+      relationship = "self";
+    } else {
+      const request = await ConnectionRequest.findOne({
+        $or: [
+          { fromUserId: viewerId, toUserId: targetId },
+          { fromUserId: targetId, toUserId: viewerId },
+        ],
+      });
+
+      if (request) {
+        if (request.status === "accepted") {
+          relationship = "connection";
+        } else if (request.status === "interested") {
+          relationship =
+            request.toUserId.toString() === viewerId.toString()
+              ? "received_request"
+              : "sent_request";
+          if (relationship === "received_request") {
+            requestId = request._id.toString();
+          }
+        } else {
+          relationship = "ignored";
+        }
+      }
+    }
+
+    res.json({ data: toSafeUser(target), relationship, requestId });
+  } catch (err) {
+    res.status(400).json({ message: "ERROR: " + err.message });
   }
 });
 
