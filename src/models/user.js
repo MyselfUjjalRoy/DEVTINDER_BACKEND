@@ -31,6 +31,10 @@ const userSchema = new mongoose.Schema(
       type: String,
       required: true,
     },
+    isEmailVerified: {
+      type: Boolean,
+      default: false,
+    },
     age: {
       type: Number,
       min: 15,
@@ -202,9 +206,13 @@ const userSchema = new mongoose.Schema(
 //because 'this' keyword will not work in arrow function
 userSchema.methods.getJWT = async function () {
   const user = this;
-  const token = await jwt.sign({ _id: user._id }, "DEV@Tinder#790$", {
-    expiresIn: "1d",
-  });
+  const token = await jwt.sign(
+    { _id: user._id },
+    process.env.JWT_SECRET || "DEV@Tinder#790$",
+    {
+      expiresIn: "1d",
+    },
+  );
 
   return token;
 };

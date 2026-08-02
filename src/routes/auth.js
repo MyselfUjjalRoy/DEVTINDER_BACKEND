@@ -2,9 +2,25 @@ const express = require("express");
 const authRouter = express.Router();
 
 const { validateSignUpData } = require("../utils/validation");
+const { createOtp, verifyOtp } = require("../utils/otpService");
+const { sendOtpEmail } = require("../utils/sendEmail");
 const User = require("../models/user");
 const bcrypt = require("bcrypt");
 const validator = require("validator");
+
+const toSafeUser = (user) => {
+  const safe = user.toObject ? user.toObject() : { ...user };
+  delete safe.password;
+  return safe;
+};
+
+const setAuthCookie = (res, token) => {
+  res.cookie("token", token, {
+    httpOnly: true,
+    expires: new Date(Date.now() + 7 * 24 * 3600000),
+    sameSite: "lax",
+  });
+};
 
 authRouter.post("/signup", async (req, res) => {
   try {
@@ -14,32 +30,78 @@ authRouter.post("/signup", async (req, res) => {
     const { firstName, lastName, emailId, password } = req.body;
 
     //2. Encrypt the password
-    //arguments: plainPswd, no. of saltRounds,
-    //saltRounds : the more the number of salt rounds will be, the more encryption level, and tougher to break the pswd
-    //salt - random string fuiibwviebvb!@@#4
+    const passwordHash = await bcrypt.hash(password, 10);
 
-    const passwordHash = await bcrypt.hash(password, 10); //returns a promise
-
-    //Creating new instance of User model
+    //3. Create new user (not verified until they prove the email)
     const user = new User({
       firstName,
       lastName,
       emailId,
       password: passwordHash,
+      isEmailVerified: false,
     });
-    //3. Store user into DB
     const savedUser = await user.save();
 
-    const token = await savedUser.getJWT();
+    //4. Generate + email a 6-digit verification code
+    const code = await createOtp(emailId, "verify");
+    let emailSent = false;
+    try {
+      await sendOtpEmail(emailId, "verify", code);
+      emailSent = true;
+    } catch (sendErr) {
+      console.error("Verification email failed:", sendErr.message);
+    }
 
-    //2. Add token to Cookie + 3. Send response back to user
-    res.cookie("token", token, {
-      httpOnly: true,
-      expires: new Date(Date.now() + 8 + 3600000),
+    res.status(201).json({
+      message: "Account created! Check your email for the verification code.",
+      data: toSafeUser(savedUser),
+      emailSent,
     });
+  } catch (err) {
+    res.status(400).send("ERROR: " + err.message);
+  }
+});
 
-    res.json({ message: "User created successfully", data: savedUser });
-    // res.send(savedUser);
+authRouter.post("/verify-email", async (req, res) => {
+  try {
+    const { emailId, otp } = req.body;
+
+    if (!validator.isEmail(emailId) || !otp) {
+      throw new Error("Email and code are required");
+    }
+
+    const result = await verifyOtp(emailId, "verify", otp);
+    if (!result.ok) throw new Error(result.reason);
+
+    const user = await User.findOne({ emailId: String(emailId).trim().toLowerCase() });
+    if (!user) throw new Error("No account found for this email");
+
+    if (user.isEmailVerified === false) {
+      user.isEmailVerified = true;
+      await user.save();
+    }
+
+    const token = await user.getJWT();
+    setAuthCookie(res, token);
+
+    res.json({ message: "Email verified successfully", data: toSafeUser(user) });
+  } catch (err) {
+    res.status(400).send("ERROR: " + err.message);
+  }
+});
+
+authRouter.post("/resend-verification", async (req, res) => {
+  try {
+    const { emailId } = req.body;
+
+    if (!validator.isEmail(emailId)) {
+      throw new Error("A valid email is required");
+    }
+
+    const code = await createOtp(emailId, "verify");
+    await sendOtpEmail(emailId, "verify", code);
+
+    res.json({ message: "Verification code resent to your email" });
   } catch (err) {
     res.status(400).send("ERROR: " + err.message);
   }
@@ -53,35 +115,82 @@ authRouter.post("/login", async (req, res) => {
       throw new Error("Email Id not valid");
     }
 
-    //Comparing Email and Pswd from DB
-
     //1. find user in the DB
-    const user = await User.findOne({ emailId: emailId });
+    const user = await User.findOne({ emailId: String(emailId).trim().toLowerCase() });
     if (!user) {
       throw new Error("Invalid credentials");
     }
 
-    //2. if user found, compare the pswd
-    //bcrypt.compare returns boolean
+    //2. compare the password
     const isPswdValid = await user.validatePswd(password);
-
-    if (isPswdValid) {
-      //1. Token being created in user schema for every user, so just get that token
-      const token = await user.getJWT();
-
-      //2. Add token to Cookie + 3. Send response back to user
-      res.cookie("token", token, {
-        httpOnly: true,
-        expires: new Date(Date.now() + 30000000),
-      });
-
-      //Job of browser is to read the cookies, and keep it safely
-      //Whenever Im making any other API call, please send back the cookie
-
-      res.send(user);
-    } else {
+    if (!isPswdValid) {
       throw new Error("Invalid credentials");
     }
+
+    //3. only verified accounts can sign in
+    if (user.isEmailVerified === false) {
+      return res.status(403).send("Please verify your email before logging in");
+    }
+
+    const token = await user.getJWT();
+    setAuthCookie(res, token);
+
+    res.send(toSafeUser(user));
+  } catch (err) {
+    res.status(400).send("ERROR: " + err.message);
+  }
+});
+
+authRouter.post("/forgot-password", async (req, res) => {
+  try {
+    const { emailId } = req.body;
+
+    if (!validator.isEmail(emailId)) {
+      throw new Error("A valid email is required");
+    }
+
+    // Always respond generically to avoid leaking which emails are registered.
+    const user = await User.findOne({ emailId: String(emailId).trim().toLowerCase() });
+    if (user) {
+      const code = await createOtp(emailId, "reset");
+      try {
+        await sendOtpEmail(emailId, "reset", code);
+      } catch (sendErr) {
+        console.error("Reset email failed:", sendErr.message);
+      }
+    }
+
+    res.json({
+      message:
+        "If an account exists for that email, a password reset code has been sent.",
+    });
+  } catch (err) {
+    res.status(400).send("ERROR: " + err.message);
+  }
+});
+
+authRouter.post("/reset-password", async (req, res) => {
+  try {
+    const { emailId, otp, password } = req.body;
+
+    if (!validator.isEmail(emailId) || !otp) {
+      throw new Error("Email and code are required");
+    }
+    if (!validator.isStrongPassword(password)) {
+      throw new Error("Password is not strong enough");
+    }
+
+    const result = await verifyOtp(emailId, "reset", otp);
+    if (!result.ok) throw new Error(result.reason);
+
+    const user = await User.findOne({ emailId: String(emailId).trim().toLowerCase() });
+    if (!user) throw new Error("No account found for this email");
+
+    const passwordHash = await bcrypt.hash(password, 10);
+    user.password = passwordHash;
+    await user.save();
+
+    res.json({ message: "Password reset successful. You can now sign in." });
   } catch (err) {
     res.status(400).send("ERROR: " + err.message);
   }
