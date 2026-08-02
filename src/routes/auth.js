@@ -141,61 +141,6 @@ authRouter.post("/login", async (req, res) => {
   }
 });
 
-authRouter.post("/forgot-password", async (req, res) => {
-  try {
-    const { emailId } = req.body;
-
-    if (!validator.isEmail(emailId)) {
-      throw new Error("A valid email is required");
-    }
-
-    // Always respond generically to avoid leaking which emails are registered.
-    const user = await User.findOne({ emailId: String(emailId).trim().toLowerCase() });
-    if (user) {
-      const code = await createOtp(emailId, "reset");
-      try {
-        await sendOtpEmail(emailId, "reset", code);
-      } catch (sendErr) {
-        console.error("Reset email failed:", sendErr.message);
-      }
-    }
-
-    res.json({
-      message:
-        "If an account exists for that email, a password reset code has been sent.",
-    });
-  } catch (err) {
-    res.status(400).send("ERROR: " + err.message);
-  }
-});
-
-authRouter.post("/reset-password", async (req, res) => {
-  try {
-    const { emailId, otp, password } = req.body;
-
-    if (!validator.isEmail(emailId) || !otp) {
-      throw new Error("Email and code are required");
-    }
-    if (!validator.isStrongPassword(password)) {
-      throw new Error("Password is not strong enough");
-    }
-
-    const result = await verifyOtp(emailId, "reset", otp);
-    if (!result.ok) throw new Error(result.reason);
-
-    const user = await User.findOne({ emailId: String(emailId).trim().toLowerCase() });
-    if (!user) throw new Error("No account found for this email");
-
-    const passwordHash = await bcrypt.hash(password, 10);
-    user.password = passwordHash;
-    await user.save();
-
-    res.json({ message: "Password reset successful. You can now sign in." });
-  } catch (err) {
-    res.status(400).send("ERROR: " + err.message);
-  }
-});
-
 authRouter.post("/logout", async (req, res) => {
   //Expiring the cookie right there when the user calls this API
   res.cookie("token", null, {
