@@ -101,13 +101,18 @@ chatRouter.get("/chats/unread", userAuth, async (req, res) => {
     });
 
     const unreadMap = {};
+    const lastActivityMap = {};
     for (const chat of chats) {
       const partnerId = chat.participants.find(
         (p) => p.toString() !== userId.toString()
       );
       if (!partnerId) continue;
 
-      const count = chat.messages.filter(
+      const visibleMessages = chat.messages.filter(
+        (m) => !m.deletedFor.includes(userId)
+      );
+
+      const count = visibleMessages.filter(
         (m) =>
           m.senderId.toString() === partnerId.toString() &&
           m.status !== "read"
@@ -116,9 +121,30 @@ chatRouter.get("/chats/unread", userAuth, async (req, res) => {
       if (count > 0) {
         unreadMap[partnerId.toString()] = count;
       }
+
+      const last = visibleMessages[visibleMessages.length - 1];
+      if (last) {
+        let preview;
+        if (last.isDeleted) {
+          preview = "This message was deleted";
+        } else if (last.attachment?.type === "image") {
+          preview = "📷 Photo";
+        } else if (last.attachment?.type === "audio") {
+          preview = "🎤 Voice message";
+        } else if (last.attachment) {
+          preview = "📎 " + (last.attachment.name || "File");
+        } else {
+          preview = last.text || "";
+        }
+        lastActivityMap[partnerId.toString()] = {
+          lastActivityAt: last.createdAt,
+          lastText: preview,
+          lastSenderId: last.senderId.toString(),
+        };
+      }
     }
 
-    res.json({ unreadMap });
+    res.json({ unreadMap, lastActivityMap });
   } catch (error) {
     console.error("Error fetching unread counts:", error);
     res.status(500).json({ message: "Internal server error" });

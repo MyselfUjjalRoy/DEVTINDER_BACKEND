@@ -1,5 +1,37 @@
 const validator = require("validator");
 
+// Single source of truth for allowed genders (used by signup + profile edit)
+const GENDERS = ["male", "female", "others"];
+
+// Max number of tags allowed per list-style field
+const MAX_ARRAY_SIZES = {
+  skills: 10,
+  hobbies: 5,
+  likes: 5,
+  dislikes: 5,
+};
+
+// Computes the user's age from a YYYY-MM-DD date of birth
+const computeAgeFromDob = (dobStr) => {
+  const [y, m, d] = dobStr.split("-").map(Number);
+  const dob = new Date(y, m - 1, d);
+  const now = new Date();
+  let age = now.getFullYear() - dob.getFullYear();
+  const monthDiff = now.getMonth() - dob.getMonth();
+  if (monthDiff < 0 || (monthDiff === 0 && now.getDate() < dob.getDate())) {
+    age -= 1;
+  }
+  return age;
+};
+
+const isDobValid = (value) => {
+  const raw = String(value || "").trim();
+  return (
+    /^\d{4}-\d{2}-\d{2}$/.test(raw) &&
+    validator.isDate(raw, { format: "YYYY-MM-DD", strictMode: true })
+  );
+};
+
 const validateSignUpData = (req) => {
   // Take out the fields from req.body
   const { firstName, lastName, emailId, password, gender } = req.body;
@@ -14,10 +46,7 @@ const validateSignUpData = (req) => {
     throw new Error("EmailId is not valid");
   } else if (!validator.isStrongPassword(password)) {
     throw new Error("Password is not strong");
-  } else if (
-    gender &&
-    !["male", "female", "others"].includes(gender.toLowerCase())
-  ) {
+  } else if (gender && !GENDERS.includes(gender.toLowerCase())) {
     throw new Error("Gender is not valid");
   }
 };
@@ -28,7 +57,7 @@ const validateSignUpData = (req) => {
 const EDITABLE_FIELDS = [
   "firstName",
   "lastName",
-  "age",
+  "dob",
   "gender",
   "photoURL",
   "photos",
@@ -99,6 +128,10 @@ const validateProfileEditData = (req) => {
           `${field} must be an array of non-empty strings (max 100 chars each)`,
         );
       }
+      const maxLen = MAX_ARRAY_SIZES[field];
+      if (maxLen && value.length > maxLen) {
+        throw new Error(`${field} can have at most ${maxLen} items`);
+      }
       continue;
     }
 
@@ -140,8 +173,11 @@ const validateProfileEditData = (req) => {
         }
         if (key === "passingYear") {
           const year = Number(v);
-          if (!Number.isInteger(year) || year < 1950 || year > 2100) {
-            throw new Error("passingYear must be a valid year");
+          const maxYear = new Date().getFullYear() + 5;
+          if (!Number.isInteger(year) || year < 1950 || year > maxYear) {
+            throw new Error(
+              `passingYear must be between 1950 and ${maxYear}`,
+            );
           }
         } else if (key === "cgpa") {
           const cgpa = Number(v);
@@ -167,19 +203,20 @@ const validateProfileEditData = (req) => {
       continue;
     }
 
-    if (field === "age") {
-      const n = Number(value);
-      if (!Number.isFinite(n) || n < 15 || n > 100) {
+    if (field === "dob") {
+      if (String(value).trim() === "") continue;
+      if (!isDobValid(value)) {
+        throw new Error("dob must be a valid date in YYYY-MM-DD format");
+      }
+      const age = computeAgeFromDob(value);
+      if (age < 15 || age > 100) {
         throw new Error("Age must be between 15 and 100");
       }
       continue;
     }
 
     if (field === "gender") {
-      if (
-        value !== "" &&
-        !["male", "female", "others"].includes(String(value).toLowerCase())
-      ) {
+      if (value !== "" && !GENDERS.includes(String(value).toLowerCase())) {
         throw new Error("Gender must be Male, Female or Others");
       }
       continue;
@@ -240,20 +277,23 @@ const sanitizeEditableFields = (body) => {
     if (field === "gender") {
       const raw = String(body[field]);
       const lower = raw.toLowerCase();
-      if (!["male", "female", "others"].includes(lower)) continue;
+      if (!GENDERS.includes(lower)) continue;
       sanitized[field] = lower.charAt(0).toUpperCase() + lower.slice(1);
       continue;
     }
 
-    if (field === "age") {
-      sanitized[field] = Number(body[field]);
+    if (field === "dob") {
+      if (!isDobValid(body[field])) continue;
+      sanitized.dob = String(body[field]).trim();
+      sanitized.age = computeAgeFromDob(sanitized.dob);
       continue;
     }
 
     if (STRING_ARRAY_FIELDS.includes(field)) {
       sanitized[field] = body[field]
         .map((item) => item.trim())
-        .filter((item) => item.length > 0);
+        .filter((item) => item.length > 0)
+        .slice(0, MAX_ARRAY_SIZES[field]);
       continue;
     }
 
@@ -278,6 +318,9 @@ const sanitizeEditableFields = (body) => {
 };
 
 module.exports = {
+  GENDERS,
+  MAX_ARRAY_SIZES,
+  computeAgeFromDob,
   validateSignUpData,
   validateProfileEditData,
   sanitizeEditableFields,

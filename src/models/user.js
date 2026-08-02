@@ -36,6 +36,16 @@ const userSchema = new mongoose.Schema(
       min: 15,
       max: 100,
     },
+    // Date of birth (YYYY-MM-DD). Age is derived from this automatically.
+    dob: {
+      type: String,
+      trim: true,
+      validate(value) {
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(String(value || ""))) {
+          throw new Error("dob must be in YYYY-MM-DD format");
+        }
+      },
+    },
     gender: {
       type: String,
       enum: {

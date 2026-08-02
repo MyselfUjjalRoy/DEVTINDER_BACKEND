@@ -7,7 +7,7 @@ const ConnectionRequest = require("../models/connectionRequest");
 const User = require("../models/user");
 
 const USER_SAFE_DATA =
-  "firstName lastName photoURL photos age gender about skills " +
+  "firstName lastName photoURL photos age dob gender about skills " +
   "location hobbies likes dislikes isStudent education work " +
   "codingProfiles github linkedin portfolio resumeURL membershipType isPremium";
 
