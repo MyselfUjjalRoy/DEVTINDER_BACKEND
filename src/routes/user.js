@@ -6,6 +6,10 @@ const { userAuth } = require("../middlewares/auth");
 const ConnectionRequest = require("../models/connectionRequest");
 const User = require("../models/user");
 const { toSafeUser } = require("../utils/userSafeData");
+const {
+  extractLeetcodeUsername,
+  fetchLeetCodeStats,
+} = require("../utils/leetcode");
 
 const USER_SAFE_DATA =
   "firstName lastName photoURL photos age dob gender about skills " +
@@ -180,6 +184,38 @@ userRouter.get("/feed", userAuth, async (req, res) => {
     ]);
 
     res.send(usersInFeed);
+  } catch (err) {
+    res.status(400).json({ message: "ERROR: " + err.message });
+  }
+});
+
+//LeetCode activity heatmap for any user's profile (backed by a 6h cache)
+userRouter.get("/user/:userId/leetcode-stats", userAuth, async (req, res) => {
+  try {
+    const targetId = req.params.userId;
+
+    if (!mongoose.Types.ObjectId.isValid(targetId)) {
+      return res.status(400).json({ message: "Invalid user id" });
+    }
+
+    const target = await User.findById(targetId).select("codingProfiles");
+    if (!target) {
+      return res.status(404).json({ message: "User not found" });
+    }
+
+    const username = extractLeetcodeUsername(target.codingProfiles?.leetcode);
+    if (!username) {
+      return res
+        .status(404)
+        .json({ message: "This user has not linked a LeetCode profile" });
+    }
+
+    const result = await fetchLeetCodeStats(username);
+    if (!result.ok) {
+      return res.status(result.code).json({ message: result.message });
+    }
+
+    res.json({ data: result.data });
   } catch (err) {
     res.status(400).json({ message: "ERROR: " + err.message });
   }
