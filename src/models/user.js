@@ -31,10 +31,6 @@ const userSchema = new mongoose.Schema(
       type: String,
       required: true,
     },
-    isEmailVerified: {
-      type: Boolean,
-      default: false,
-    },
     age: {
       type: Number,
       min: 15,
