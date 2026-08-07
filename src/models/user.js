@@ -60,6 +60,14 @@ const userSchema = new mongoose.Schema(
     membershipType: {
       type: String,
     },
+    //Daily super connect quota tracking (resets at midnight IST)
+    superLikesUsed: {
+      type: Number,
+      default: 0,
+    },
+    superLikesDate: {
+      type: String,
+    },
     photoURL: {
       type: String,
       default: "https://img.freepik.com/free-icon/user_318-563642.jpg",

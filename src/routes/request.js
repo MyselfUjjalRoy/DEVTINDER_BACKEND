@@ -4,11 +4,129 @@ const requestRouter = express.Router();
 const { userAuth } = require("../middlewares/auth");
 const ConnectionRequest = require("../models/connectionRequest");
 const User = require("../models/user");
+const SuperLike = require("../models/superLike");
 
 const sendEmail = require("../utils/sendEmail");
 const { getIO } = require("../utils/io");
 const { notifyUser } = require("../utils/notifications");
 const { toSafeUser, USER_SAFE_DATA } = require("../utils/userSafeData");
+const { FREE_DAILY_SUPERLIKES } = require("../utils/constants");
+
+//IST date string (YYYY-MM-DD) used for daily super connect quota reset
+const getTodayIST = () =>
+  new Date(Date.now() + 5.5 * 3600 * 1000).toISOString().slice(0, 10);
+
+requestRouter.get("/request/superlike/status", userAuth, async (req, res) => {
+  try {
+    const today = getTodayIST();
+    const used =
+      req.user.superLikesDate === today
+        ? Number(req.user.superLikesUsed) || 0
+        : 0;
+    const isPremium = Boolean(req.user.isPremium);
+    const remaining = isPremium
+      ? null
+      : Math.max(0, FREE_DAILY_SUPERLIKES - used);
+
+    res.json({ remaining, isPremium, used, dailyLimit: isPremium ? null : FREE_DAILY_SUPERLIKES });
+  } catch (err) {
+    res.status(400).json({ message: "ERROR: " + err.message });
+  }
+});
+
+requestRouter.post(
+  "/request/superlike/:toUserId",
+  userAuth,
+  async (req, res) => {
+    try {
+      const fromUserId = req.user._id;
+      const toUserId = req.params.toUserId;
+
+      if (String(fromUserId) === String(toUserId)) {
+        return res
+          .status(400)
+          .json({ message: "Cannot super connect with yourself" });
+      }
+
+      const toUser = await User.findById(toUserId);
+      if (!toUser) {
+        return res.status(404).json({ message: "User not found" });
+      }
+
+      const existingConnectionRequest = await ConnectionRequest.findOne({
+        $or: [
+          { fromUserId, toUserId },
+          {
+            fromUserId: toUserId,
+            toUserId: fromUserId,
+          },
+        ],
+      });
+
+      if (existingConnectionRequest) {
+        return res
+          .status(400)
+          .json({ message: "Connection request already exists" });
+      }
+
+      const existingSuperLike = await SuperLike.findOne({
+        fromUserId,
+        toUserId,
+      });
+      if (existingSuperLike) {
+        return res
+          .status(400)
+          .json({ message: "You already super connected with this developer" });
+      }
+
+      //Daily quota check (resets at midnight IST)
+      const today = getTodayIST();
+      if (req.user.superLikesDate !== today) {
+        req.user.superLikesUsed = 0;
+        req.user.superLikesDate = today;
+      }
+
+      const isPremium = Boolean(req.user.isPremium);
+      const usedToday = Number(req.user.superLikesUsed) || 0;
+      if (!isPremium && usedToday >= FREE_DAILY_SUPERLIKES) {
+        return res.status(403).json({
+          message:
+            "Daily super connect limit reached. Come back tomorrow or go premium for unlimited.",
+          remaining: 0,
+        });
+      }
+
+      req.user.superLikesUsed = usedToday + 1;
+      await req.user.save();
+
+      await SuperLike.create({ fromUserId, toUserId });
+
+      const remaining = isPremium
+        ? null
+        : Math.max(0, FREE_DAILY_SUPERLIKES - req.user.superLikesUsed);
+
+      await notifyUser({
+        userId: toUser._id,
+        fromUserId,
+        type: "superlike",
+        message: `${req.user.firstName}${
+          req.user.lastName ? " " + req.user.lastName : ""
+        } super connected with your profile! Check their card in your feed. ⭐`,
+        link: "/feed",
+        actor: toSafeUser(req.user),
+      });
+
+      res.json({
+        message: `${req.user.firstName} super connected with ${toUser.firstName}`,
+        remaining,
+        isPremium,
+      });
+    } catch (err) {
+      console.error(err);
+      res.status(400).send(err.message);
+    }
+  },
+);
 
 requestRouter.post(
   "/request/send/:status/:toUserId",

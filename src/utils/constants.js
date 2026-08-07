@@ -3,4 +3,7 @@ const membershipAmount = {
   gold: 700,
 };
 
-module.exports = { membershipAmount };
+//How many super connects a free user gets per day (premium = unlimited)
+const FREE_DAILY_SUPERLIKES = 3;
+
+module.exports = { membershipAmount, FREE_DAILY_SUPERLIKES };

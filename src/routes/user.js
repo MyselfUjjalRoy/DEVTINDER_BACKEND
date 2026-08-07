@@ -5,6 +5,7 @@ const userRouter = express.Router();
 const { userAuth } = require("../middlewares/auth");
 const ConnectionRequest = require("../models/connectionRequest");
 const User = require("../models/user");
+const SuperLike = require("../models/superLike");
 const { toSafeUser } = require("../utils/userSafeData");
 const {
   extractLeetcodeUsername,
@@ -25,13 +26,24 @@ userRouter.get("/user/requests/received", userAuth, async (req, res) => {
       status: "interested",
     }).populate("fromUserId", USER_SAFE_DATA);
 
-    //Finding name of these connection requests
+    //Flag requests from devs who also super connected with me
+    const superLikesToMe = await SuperLike.find({
+      toUserId: loggedInUser._id,
+    }).select("fromUserId");
 
-    //Way 1: Looping over each request and then find name -> Poor way of handling
+    const superFromIds = new Set(
+      superLikesToMe.map((s) => s.fromUserId.toString()),
+    );
 
-    //Way 2: Building relation bw two tables -> ConnectionRequest & User
+    const data = connectionRequests.map((r) => {
+      const obj = r.toObject();
+      obj.superConnect = superFromIds.has(
+        String(obj.fromUserId?._id || obj.fromUserId || ""),
+      );
+      return obj;
+    });
 
-    res.json({ message: "Data Sent Successfully", data: connectionRequests });
+    res.json({ message: "Data Sent Successfully", data });
   } catch (err) {
     res.status(400).json({ message: "ERROR: " + err.message });
   }
@@ -54,6 +66,7 @@ userRouter.get("/user/profile/:userId", userAuth, async (req, res) => {
 
     let relationship = "stranger";
     let requestId = null;
+    let superConnect = false;
 
     if (targetId.toString() === viewerId.toString()) {
       relationship = "self";
@@ -80,9 +93,18 @@ userRouter.get("/user/profile/:userId", userAuth, async (req, res) => {
           relationship = "ignored";
         }
       }
+
+      //Did either of us super connect with the other?
+      const superLike = await SuperLike.findOne({
+        $or: [
+          { fromUserId: viewerId, toUserId: targetId },
+          { fromUserId: targetId, toUserId: viewerId },
+        ],
+      });
+      superConnect = Boolean(superLike);
     }
 
-    res.json({ data: toSafeUser(target), relationship, requestId });
+    res.json({ data: toSafeUser(target), relationship, requestId, superConnect });
   } catch (err) {
     res.status(400).json({ message: "ERROR: " + err.message });
   }
@@ -100,13 +122,29 @@ userRouter.get("/user/connections", userAuth, async (req, res) => {
       .populate("fromUserId", USER_SAFE_DATA)
       .populate("toUserId", USER_SAFE_DATA);
 
-    // console.log(connections);
+    // Which matches started with a super connect (either direction)
+    const superLikes = await SuperLike.find({
+      $or: [
+        { fromUserId: loggedInUser._id },
+        { toUserId: loggedInUser._id },
+      ],
+    }).select("fromUserId toUserId");
+
+    const superIds = new Set();
+    superLikes.forEach((s) => {
+      superIds.add(s.fromUserId.toString());
+      superIds.add(s.toUserId.toString());
+    });
 
     const data = connections.map((row) => {
-      if (row.fromUserId._id.toString() === loggedInUser._id.toString()) {
-        return row.toUserId;
-      }
-      return row.fromUserId;
+      const other =
+        row.fromUserId._id.toString() === loggedInUser._id.toString()
+          ? row.toUserId
+          : row.fromUserId;
+      return {
+        ...toSafeUser(other),
+        superConnect: superIds.has(String(other._id)),
+      };
     });
 
     res.json({ data });
@@ -155,6 +193,13 @@ userRouter.get("/feed", userAuth, async (req, res) => {
           ? "Male"
           : null;
 
+    //Who super connected with me in the last 24h -> boosted to the top of my feed
+    const superLikesReceived = await SuperLike.find({
+      toUserId: loggedInUser._id,
+      createdAt: { $gte: new Date(Date.now() - 24 * 60 * 60 * 1000) },
+    }).select("fromUserId");
+    const superLikeFromIds = superLikesReceived.map((s) => s.fromUserId);
+
     const usersInFeed = await User.aggregate([
       { $match: { _id: { $nin: hiddenIds } } },
       {
@@ -170,16 +215,26 @@ userRouter.get("/feed", userAuth, async (req, res) => {
                 },
               }
             : 1,
+          _boost: superLikeFromIds.length
+            ? {
+                $cond: [{ $in: ["$_id", superLikeFromIds] }, 0, 1],
+              }
+            : 1,
           _rand: { $rand: {} },
         },
       },
-      { $sort: { _genderPreference: 1, _rand: 1 } },
+      { $sort: { _genderPreference: 1, _boost: 1, _rand: 1 } },
       { $skip: skipUsers },
       { $limit: limit },
       {
-        $project: Object.fromEntries(
-          USER_SAFE_DATA.split(" ").map((field) => [field, 1]),
-        ),
+        $project: {
+          ...Object.fromEntries(
+            USER_SAFE_DATA.split(" ").map((field) => [field, 1]),
+          ),
+          starredYou: superLikeFromIds.length
+            ? { $in: ["$_id", superLikeFromIds] }
+            : { $literal: false },
+        },
       },
     ]);
 

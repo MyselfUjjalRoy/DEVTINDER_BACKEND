@@ -23,6 +23,7 @@ const notificationSchema = new mongoose.Schema(
           "connection_rejected",
           "match",
           "message",
+          "superlike",
           "system",
         ],
         message: `{VALUE} is not a valid notification type`,
