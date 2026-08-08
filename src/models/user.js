@@ -37,6 +37,13 @@ const userSchema = new mongoose.Schema(
       unique: true,
       sparse: true,
     },
+    // Set only when the user signs in with GitHub (OAuth). Same purpose
+    // as googleId — lets us link and re-identify GitHub logins.
+    githubId: {
+      type: String,
+      unique: true,
+      sparse: true,
+    },
     age: {
       type: Number,
       min: 15,
