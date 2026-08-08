@@ -8,7 +8,7 @@ const userSchema = new mongoose.Schema(
     firstName: {
       type: String,
       required: true,
-      minLength: 4,
+      minLength: 1,
       maxLength: 50,
       index: true, //creating an index
     },
@@ -29,7 +29,13 @@ const userSchema = new mongoose.Schema(
     },
     password: {
       type: String,
-      required: true,
+    },
+    // Set only when the user signs in with Google (OAuth). Makes the
+    // user identifiable as a Google account and lets us link logins.
+    googleId: {
+      type: String,
+      unique: true,
+      sparse: true,
     },
     age: {
       type: Number,
