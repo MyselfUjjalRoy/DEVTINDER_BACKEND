@@ -7,6 +7,8 @@ const ConnectionRequest = require("../models/connectionRequest");
 const User = require("../models/user");
 const SuperLike = require("../models/superLike");
 const { toSafeUser } = require("../utils/userSafeData");
+const { rankFeed } = require("../utils/feedRanking");
+const { filterSeen } = require("../utils/feedSeen");
 const {
   extractLeetcodeUsername,
   fetchLeetCodeStats,
@@ -186,11 +188,11 @@ userRouter.get("/feed", userAuth, async (req, res) => {
     hiddenIds.push(loggedInUser._id);
 
     const loggedInGender = String(loggedInUser.gender || "").toLowerCase();
-    const preferField =
+    const preferGender =
       loggedInGender === "male"
-        ? "Female"
+        ? "female"
         : loggedInGender === "female"
-          ? "Male"
+          ? "male"
           : null;
 
     //Who super connected with me in the last 24h -> boosted to the top of my feed
@@ -200,43 +202,53 @@ userRouter.get("/feed", userAuth, async (req, res) => {
     }).select("fromUserId");
     const superLikeFromIds = superLikesReceived.map((s) => s.fromUserId);
 
-    const usersInFeed = await User.aggregate([
-      { $match: { _id: { $nin: hiddenIds } } },
-      {
-        $addFields: {
-          _genderPreference: preferField
-            ? {
-                $cond: {
-                  if: {
-                    $eq: [{ $toLower: "$gender" }, preferField.toLowerCase()],
-                  },
-                  then: 0,
-                  else: 1,
-                },
-              }
-            : 1,
-          _boost: superLikeFromIds.length
-            ? {
-                $cond: [{ $in: ["$_id", superLikeFromIds] }, 0, 1],
-              }
-            : 1,
-          _rand: { $rand: {} },
-        },
-      },
-      { $sort: { _genderPreference: 1, _boost: 1, _rand: 1 } },
-      { $skip: skipUsers },
-      { $limit: limit },
-      {
-        $project: {
-          ...Object.fromEntries(
-            USER_SAFE_DATA.split(" ").map((field) => [field, 1]),
-          ),
-          starredYou: superLikeFromIds.length
-            ? { $in: ["$_id", superLikeFromIds] }
-            : { $literal: false },
-        },
-      },
-    ]);
+    //Light projection: only the fields the scorer/rank needs. Full profiles are
+    //fetched afterwards for the current page only ($in). Exactly 2 queries, no N+1.
+    const candidates = await User.find(
+      { _id: { $nin: hiddenIds } },
+      { _id: 1, skills: 1, location: 1, gender: 1 },
+    ).lean();
+
+    //Seen-pile: drop every card the user has already DECIDED on (liked/ignored/
+    //connected — grown only by swipes, never by merely looking). We already have
+    //all candidates in memory, so this filter is free (no extra query).
+    const unseen = filterSeen(candidates, loggedInUser.seenIds);
+
+    //Deterministic, per-day seed -> stable pagination (no duplicate cards
+    //across pages) while still getting fresh variety each day.
+    const seed = `${String(loggedInUser._id)}|${new Date()
+      .toISOString()
+      .slice(0, 10)}`;
+
+    const ranked = rankFeed(loggedInUser, unseen, {
+      starredIds: superLikeFromIds,
+      preferGender,
+      seed,
+    });
+
+    const pageCandidates = ranked.slice(skipUsers, skipUsers + limit);
+
+    const fullUsers = await User.find({
+      _id: { $in: pageCandidates.map((c) => c._id) },
+    }).select(USER_SAFE_DATA);
+
+    const userById = new Map(fullUsers.map((u) => [String(u._id), u]));
+
+    const starredIds = new Set(superLikeFromIds.map((id) => String(id)));
+    const usersInFeed = pageCandidates
+      .map((candidate) => {
+        const user = userById.get(String(candidate._id));
+        if (!user) return null;
+        const safe = toSafeUser(user);
+        safe.starredYou = starredIds.has(String(candidate._id));
+        safe.score = candidate.score;
+        safe.breakdown = candidate.breakdown;
+        return safe;
+      })
+      .filter(Boolean);
+
+    //NOTE: shown cards are NOT marked seen — the seen-pile only grows when the
+    //user swipes (request.js). Refreshing keeps undecided cards available.
 
     res.send(usersInFeed);
   } catch (err) {

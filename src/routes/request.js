@@ -10,6 +10,8 @@ const sendEmail = require("../utils/sendEmail");
 const { getIO } = require("../utils/io");
 const { notifyUser } = require("../utils/notifications");
 const { toSafeUser, USER_SAFE_DATA } = require("../utils/userSafeData");
+const { applySwipeFeedback, SWIPE_ACTIONS } = require("../utils/feedback");
+const { markSeen } = require("../utils/feedSeen");
 const { FREE_DAILY_SUPERLIKES } = require("../utils/constants");
 
 //IST date string (YYYY-MM-DD) used for daily super connect quota reset
@@ -101,6 +103,11 @@ requestRouter.post(
 
       await SuperLike.create({ fromUserId, toUserId });
 
+      //A super connect is a strong positive signal — teach the recommender.
+      await applySwipeFeedback(req.user, toUser, SWIPE_ACTIONS.LIKE);
+      //This card is now decided — keep it out of future feeds (best-effort).
+      markSeen(req.user._id, [toUserId]);
+
       const remaining = isPremium
         ? null
         : Math.max(0, FREE_DAILY_SUPERLIKES - req.user.superLikesUsed);
@@ -189,6 +196,15 @@ requestRouter.post(
 
       console.log("Connection Request Saved");
 
+      //Feed the recommender: interested = like, ignored = ignore.
+      await applySwipeFeedback(
+        req.user,
+        toUser,
+        status === "interested" ? SWIPE_ACTIONS.LIKE : SWIPE_ACTIONS.IGNORE,
+      );
+      //Either way, this card is decided — don't show it again (best-effort).
+      markSeen(req.user._id, [toUserId]);
+
       if (status === "interested") {
         const senderName = req.user.firstName + " " + (req.user.lastName || "");
 
@@ -267,10 +283,13 @@ requestRouter.post(
 
       const data = await connectionRequest.save();
 
-      if (status === "accepted") {
-        await connectionRequest.populate("fromUserId", USER_SAFE_DATA);
+      await connectionRequest.populate("fromUserId", USER_SAFE_DATA);
+      const fromUser = connectionRequest.fromUserId;
 
-        const fromUser = connectionRequest.fromUserId;
+      if (status === "accepted") {
+        //Accepting is a strong positive signal — teach the recommender.
+        await applySwipeFeedback(loggedInUser, fromUser, SWIPE_ACTIONS.LIKE);
+
         const matchData = {
           requestId: connectionRequest._id,
           users: [toSafeUser(fromUser), toSafeUser(loggedInUser)],
@@ -291,6 +310,9 @@ requestRouter.post(
           actor: toSafeUser(loggedInUser),
         });
       } else if (status === "rejected") {
+        //Rejecting is a negative signal — teach the recommender.
+        await applySwipeFeedback(loggedInUser, fromUser, SWIPE_ACTIONS.IGNORE);
+
         await notifyUser({
           userId: connectionRequest.fromUserId,
           fromUserId: loggedInUser._id,
@@ -300,6 +322,9 @@ requestRouter.post(
           actor: toSafeUser(loggedInUser),
         });
       }
+
+      //Decided card (accepted OR rejected) — never show it again (best-effort).
+      markSeen(loggedInUser._id, [connectionRequest.fromUserId]);
 
       res.json({ message: "Connection request " + status, data });
     } catch (err) {

@@ -81,6 +81,25 @@ const userSchema = new mongoose.Schema(
     superLikesDate: {
       type: String,
     },
+    //Learned affinity per skill (normalized skill -> multiplier), grown by the
+    //recommender feedback loop on swipes. Drives weighted skill overlap in the feed.
+    preferenceSkills: {
+      type: Map,
+      of: Number,
+      default: () => ({}),
+    },
+    //Total swipe decisions made — drives "learned from N swipes" UI copy.
+    swipeCount: {
+      type: Number,
+      default: 0,
+    },
+    //Cards the user has already been shown or swiped (Tinder-style seen-pile).
+    //Excluded from future feeds so refreshing shows NEW people, never repeats.
+    //Kept capped (rotates the oldest out) so a small pool eventually cycles.
+    seenIds: {
+      type: [{ type: mongoose.Schema.Types.ObjectId, ref: "User" }],
+      default: () => [],
+    },
     photoURL: {
       type: String,
       default: "https://img.freepik.com/free-icon/user_318-563642.jpg",
