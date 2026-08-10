@@ -48,6 +48,36 @@ const messageSchema = new mongoose.Schema(
       name: { type: String },
       size: { type: Number },
     },
+    // WhatsApp-style reply. This is a DENORMALIZED snapshot of the quoted
+    // message, captured at send time, so a reply still renders even if the
+    // original message is later deleted or cleared.
+    replyTo: {
+      _id: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: "Chat.messages",
+      },
+      senderId: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: "User",
+      },
+      senderName: {
+        type: String,
+        maxLength: 100,
+      },
+      text: {
+        type: String,
+        default: "",
+      },
+      attachment: {
+        type: { type: String },
+        name: { type: String },
+        url: { type: String },
+      },
+      isDeleted: {
+        type: Boolean,
+        default: false,
+      },
+    },
   },
   { timestamps: true }
 );

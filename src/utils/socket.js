@@ -1,7 +1,9 @@
 const socket = require("socket.io");
 const crypto = require("crypto");
+const mongoose = require("mongoose");
 const Chat = require("../models/chat");
 const ConnectionRequest = require("../models/connectionRequest");
+const User = require("../models/user");
 const { socketAuth } = require("../middlewares/auth");
 const { setIO } = require("./io");
 const { notifyUser } = require("./notifications");
@@ -27,6 +29,43 @@ const verifyMatch = async (userId1, userId2) => {
       { fromUserId: userId2, toUserId: userId1, status: "accepted" },
     ],
   });
+};
+
+const REPLY_TEXT_LIMIT = 120;
+
+// Builds a sanitized snapshot of the quoted message for a reply. The snapshot
+// is derived from the persisted message (never trusted client input), so a
+// reply keeps rendering even if the original message is later deleted.
+const buildReplySnapshot = ({ replyTo, chat, userId, sender, targetUser }) => {
+  if (!replyTo || !replyTo._id) return null;
+  if (!mongoose.Types.ObjectId.isValid(replyTo._id)) return null;
+
+  const msg = chat.messages.id(replyTo._id);
+  if (!msg) return null;
+  if (msg.deletedFor.some((id) => id.toString() === userId)) return null;
+
+  const senderIsSelf = msg.senderId.toString() === userId;
+  const senderName = senderIsSelf
+    ? `${sender.firstName} ${sender.lastName || ""}`.trim()
+    : targetUser
+      ? `${targetUser.firstName} ${targetUser.lastName || ""}`.trim()
+      : "";
+
+  const snapshot = {
+    _id: msg._id,
+    senderId: msg.senderId,
+    senderName,
+    text: msg.isDeleted ? "" : String(msg.text || "").slice(0, REPLY_TEXT_LIMIT),
+    isDeleted: !!msg.isDeleted,
+  };
+  if (msg.attachment) {
+    snapshot.attachment = {
+      type: msg.attachment.type,
+      name: msg.attachment.name,
+      url: msg.attachment.url,
+    };
+  }
+  return snapshot;
 };
 
 const initializeSocket = (server) => {
@@ -89,7 +128,7 @@ const initializeSocket = (server) => {
       }
     });
 
-    socket.on("sendMessage", async ({ targetUserId, text, attachment }) => {
+    socket.on("sendMessage", async ({ targetUserId, text, attachment, replyTo }) => {
       try {
         if (!targetUserId) return;
         if (!text && !attachment) return;
@@ -107,6 +146,22 @@ const initializeSocket = (server) => {
             messages: [],
           });
         }
+
+        let replySnapshot = null;
+        if (replyTo) {
+          const targetUser = await User.findById(
+            targetUserId,
+            "firstName lastName"
+          ).lean();
+          replySnapshot = buildReplySnapshot({
+            replyTo,
+            chat,
+            userId,
+            sender: socket.user,
+            targetUser,
+          });
+        }
+
         const newMessage = {
           senderId: userId,
           text: (text || "").trim(),
@@ -114,6 +169,9 @@ const initializeSocket = (server) => {
         };
         if (attachment) {
           newMessage.attachment = attachment;
+        }
+        if (replySnapshot) {
+          newMessage.replyTo = replySnapshot;
         }
         chat.messages.push(newMessage);
         await chat.save();
@@ -148,6 +206,7 @@ const initializeSocket = (server) => {
           text: (text || "").trim(),
           status: savedMsg.status,
           attachment: attachment || null,
+          replyTo: replySnapshot || null,
           createdAt: new Date(),
         });
       } catch (err) {
