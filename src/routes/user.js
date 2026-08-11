@@ -13,6 +13,7 @@ const {
   extractLeetcodeUsername,
   fetchLeetCodeStats,
 } = require("../utils/leetcode");
+const deckCache = require("../utils/deckCache");
 
 const USER_SAFE_DATA =
   "firstName lastName photoURL photos age dob gender about skills " +
@@ -171,60 +172,77 @@ userRouter.get("/feed", userAuth, async (req, res) => {
 
     const skipUsers = (page - 1) * limit;
 
-    //1. Find all connection requests (sent + received)
-    const connectionRequests = await ConnectionRequest.find({
-      $or: [{ fromUserId: loggedInUser._id }, { toUserId: loggedInUser._id }],
-    }).select("fromUserId toUserId");
+    //CACHED DECK: the ranked deck is expensive to build (a full O(N) scoring
+    //pass). It is cached per user for TTL_MS and invalidated on every swipe /
+    //super connect / request review / profile edit — i.e. exactly when the
+    //ranking inputs change. On a hit we skip straight to the page slice.
+    let ranked;
+    let superLikeFromIds = [];
+    let cacheStatus = "MISS";
 
-    const hiddenUsersFromFeed = new Set();
-    connectionRequests.forEach((req) => {
-      hiddenUsersFromFeed.add(req.fromUserId.toString());
-      hiddenUsersFromFeed.add(req.toUserId.toString());
-    });
+    const cached = deckCache.get(loggedInUser._id);
+    if (cached) {
+      ranked = cached.deck;
+      superLikeFromIds = cached.starredIds;
+      cacheStatus = "HIT";
+    } else {
+      //1. Find all connection requests (sent + received)
+      const connectionRequests = await ConnectionRequest.find({
+        $or: [{ fromUserId: loggedInUser._id }, { toUserId: loggedInUser._id }],
+      }).select("fromUserId toUserId");
 
-    const hiddenIds = Array.from(hiddenUsersFromFeed).map(
-      (id) => new mongoose.Types.ObjectId(id),
-    );
-    hiddenIds.push(loggedInUser._id);
+      const hiddenUsersFromFeed = new Set();
+      connectionRequests.forEach((req) => {
+        hiddenUsersFromFeed.add(req.fromUserId.toString());
+        hiddenUsersFromFeed.add(req.toUserId.toString());
+      });
 
-    const loggedInGender = String(loggedInUser.gender || "").toLowerCase();
-    const preferGender =
-      loggedInGender === "male"
-        ? "female"
-        : loggedInGender === "female"
-          ? "male"
-          : null;
+      const hiddenIds = Array.from(hiddenUsersFromFeed).map(
+        (id) => new mongoose.Types.ObjectId(id),
+      );
+      hiddenIds.push(loggedInUser._id);
 
-    //Who super connected with me in the last 24h -> boosted to the top of my feed
-    const superLikesReceived = await SuperLike.find({
-      toUserId: loggedInUser._id,
-      createdAt: { $gte: new Date(Date.now() - 24 * 60 * 60 * 1000) },
-    }).select("fromUserId");
-    const superLikeFromIds = superLikesReceived.map((s) => s.fromUserId);
+      const loggedInGender = String(loggedInUser.gender || "").toLowerCase();
+      const preferGender =
+        loggedInGender === "male"
+          ? "female"
+          : loggedInGender === "female"
+            ? "male"
+            : null;
 
-    //Light projection: only the fields the scorer/rank needs. Full profiles are
-    //fetched afterwards for the current page only ($in). Exactly 2 queries, no N+1.
-    const candidates = await User.find(
-      { _id: { $nin: hiddenIds } },
-      { _id: 1, skills: 1, location: 1, gender: 1 },
-    ).lean();
+      //Who super connected with me in the last 24h -> boosted to the top of my feed
+      const superLikesReceived = await SuperLike.find({
+        toUserId: loggedInUser._id,
+        createdAt: { $gte: new Date(Date.now() - 24 * 60 * 60 * 1000) },
+      }).select("fromUserId");
+      superLikeFromIds = superLikesReceived.map((s) => s.fromUserId);
 
-    //Seen-pile: drop every card the user has already DECIDED on (liked/ignored/
-    //connected — grown only by swipes, never by merely looking). We already have
-    //all candidates in memory, so this filter is free (no extra query).
-    const unseen = filterSeen(candidates, loggedInUser.seenIds);
+      //Light projection: only the fields the scorer/rank needs. Full profiles are
+      //fetched afterwards for the current page only ($in). Exactly 2 queries, no N+1.
+      const candidates = await User.find(
+        { _id: { $nin: hiddenIds } },
+        { _id: 1, skills: 1, location: 1, gender: 1 },
+      ).lean();
 
-    //Deterministic, per-day seed -> stable pagination (no duplicate cards
-    //across pages) while still getting fresh variety each day.
-    const seed = `${String(loggedInUser._id)}|${new Date()
-      .toISOString()
-      .slice(0, 10)}`;
+      //Seen-pile: drop every card the user has already DECIDED on (liked/ignored/
+      //connected — grown only by swipes, never by merely looking). We already have
+      //all candidates in memory, so this filter is free (no extra query).
+      const unseen = filterSeen(candidates, loggedInUser.seenIds);
 
-    const ranked = rankFeed(loggedInUser, unseen, {
-      starredIds: superLikeFromIds,
-      preferGender,
-      seed,
-    });
+      //Deterministic, per-day seed -> stable pagination (no duplicate cards
+      //across pages) while still getting fresh variety each day.
+      const seed = `${String(loggedInUser._id)}|${new Date()
+        .toISOString()
+        .slice(0, 10)}`;
+
+      ranked = rankFeed(loggedInUser, unseen, {
+        starredIds: superLikeFromIds,
+        preferGender,
+        seed,
+      });
+
+      deckCache.set(loggedInUser._id, ranked, superLikeFromIds);
+    }
 
     const pageCandidates = ranked.slice(skipUsers, skipUsers + limit);
 
@@ -250,10 +268,16 @@ userRouter.get("/feed", userAuth, async (req, res) => {
     //NOTE: shown cards are NOT marked seen — the seen-pile only grows when the
     //user swipes (request.js). Refreshing keeps undecided cards available.
 
+    res.set("x-cache", cacheStatus);
     res.send(usersInFeed);
   } catch (err) {
     res.status(400).json({ message: "ERROR: " + err.message });
   }
+});
+
+//Cache observability for the interview demo: hit/miss counts + hit rate.
+userRouter.get("/user/cache-stats", userAuth, async (req, res) => {
+  res.json({ data: deckCache.stats() });
 });
 
 //LeetCode activity heatmap for any user's profile (backed by a 6h cache)

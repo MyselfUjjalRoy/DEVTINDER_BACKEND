@@ -12,6 +12,7 @@ const { notifyUser } = require("../utils/notifications");
 const { toSafeUser, USER_SAFE_DATA } = require("../utils/userSafeData");
 const { applySwipeFeedback, SWIPE_ACTIONS } = require("../utils/feedback");
 const { markSeen } = require("../utils/feedSeen");
+const deckCache = require("../utils/deckCache");
 const { FREE_DAILY_SUPERLIKES } = require("../utils/constants");
 
 //IST date string (YYYY-MM-DD) used for daily super connect quota reset
@@ -107,6 +108,11 @@ requestRouter.post(
       await applySwipeFeedback(req.user, toUser, SWIPE_ACTIONS.LIKE);
       //This card is now decided — keep it out of future feeds (best-effort).
       markSeen(req.user._id, [toUserId]);
+
+      //Deck cache: my seen-pile + preferences changed, and the recipient just
+      //got a "starredYou" boost — both feeds must be rebuilt.
+      deckCache.invalidate(req.user._id);
+      deckCache.invalidate(toUser._id);
 
       const remaining = isPremium
         ? null
@@ -204,6 +210,11 @@ requestRouter.post(
       );
       //Either way, this card is decided — don't show it again (best-effort).
       markSeen(req.user._id, [toUserId]);
+
+      //Deck cache: my preferences/seen-pile changed, and the recipient now
+      //hides me from their feed — rebuild both decks.
+      deckCache.invalidate(req.user._id);
+      deckCache.invalidate(toUser._id);
 
       if (status === "interested") {
         const senderName = req.user.firstName + " " + (req.user.lastName || "");
@@ -325,6 +336,12 @@ requestRouter.post(
 
       //Decided card (accepted OR rejected) — never show it again (best-effort).
       markSeen(loggedInUser._id, [connectionRequest.fromUserId]);
+
+      //Deck cache: my preferences/seen-pile changed, and the other user now
+      //hides me from their feed (accepted = connection, rejected = ignored) —
+      //rebuild both decks.
+      deckCache.invalidate(loggedInUser._id);
+      deckCache.invalidate(connectionRequest.fromUserId);
 
       res.json({ message: "Connection request " + status, data });
     } catch (err) {

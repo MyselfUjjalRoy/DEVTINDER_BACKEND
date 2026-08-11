@@ -28,6 +28,12 @@ const connectionRequestSchema = new mongoose.Schema(
 //COMPOUND INDEX
 //1 -> Ascending Order, -1 -> Descending Order //changing the order of how MongoDB stores data in the DB
 connectionRequestSchema.index({ fromUserId: 1, toUserId: 1 });
+//Feed/requests lookups filter by "who sent me a pending request" and the
+//$or half of the feed's hidden-set query (toUserId only). The status qualifier
+//makes these IXSCAN instead of scanning every row for the user.
+connectionRequestSchema.index({ toUserId: 1, status: 1 });
+//Connections list's other $or branch: my outgoing accepted/rejected rows.
+connectionRequestSchema.index({ fromUserId: 1, status: 1 });
 
 //pre middleware - (like an event handler)
 // will be called before a connectionRequest will be saved - basically 'pre' save

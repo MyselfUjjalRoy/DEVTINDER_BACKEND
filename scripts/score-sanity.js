@@ -27,6 +27,7 @@ const {
   applySwipeFeedback,
 } = require("../src/utils/feedback");
 const { seenKeys, filterSeen } = require("../src/utils/feedSeen");
+const deckCache = require("../src/utils/deckCache");
 
 let passed = 0;
 let failed = 0;
@@ -481,6 +482,57 @@ test("affinity only amplifies the skills actually liked", () => {
   const learned = computeCompatibility(viewer, candidate).total;
   const cold = computeCompatibility(fullProfile(), candidate).total;
   assert.strictEqual(learned, cold);
+});
+
+// ---------------------------------------------------------------------------
+// deckCache (Step 7: the ranked-deck cache)
+// ---------------------------------------------------------------------------
+
+test("deckCache get on an empty cache returns null and counts a miss", () => {
+  deckCache.clear();
+  assert.strictEqual(deckCache.get("user-1"), null);
+  assert.strictEqual(deckCache.stats().misses, 1);
+  assert.strictEqual(deckCache.stats().hits, 0);
+});
+
+test("deckCache set then get returns the deck and its starred ids", () => {
+  deckCache.clear();
+  const deck = [{ _id: "a", score: 90 }, { _id: "b", score: 70 }];
+  deckCache.set("user-1", deck, ["x", "y"]);
+  const entry = deckCache.get("user-1");
+  assert.deepStrictEqual(entry.deck, deck);
+  assert.deepStrictEqual(entry.starredIds, ["x", "y"]);
+  assert.strictEqual(deckCache.stats().hits, 1);
+});
+
+test("deckCache invalidate drops the entry and forces a rebuild", () => {
+  deckCache.clear();
+  deckCache.set("user-1", [{ _id: "a" }], []);
+  assert.deepStrictEqual(deckCache.get("user-1"), {
+    deck: [{ _id: "a" }],
+    starredIds: [],
+  });
+  deckCache.invalidate("user-1");
+  assert.strictEqual(deckCache.get("user-1"), null);
+  assert.strictEqual(deckCache.stats().hitRate, 0.5); // 1 hit + 1 miss
+});
+
+test("deckCache key is per user AND per day (day rollover reseeds the jitter)", () => {
+  const { cacheKey } = require("../src/utils/deckCache");
+  assert.notStrictEqual(
+    cacheKey("user-1").slice(0, "user-1".length),
+    cacheKey("user-2").slice(0, "user-2".length),
+  );
+  assert.ok(cacheKey("user-1").endsWith(new Date().toISOString().slice(0, 10)));
+  assert.notStrictEqual(cacheKey("user-1"), `user-1|2000-01-01`);
+});
+
+test("deckCache set/get round-trips ObjectIds as string starred ids", () => {
+  deckCache.clear();
+  const { Types } = require("mongoose");
+  const oid = new Types.ObjectId();
+  deckCache.set("user-1", [{ _id: "a" }], [oid]);
+  assert.deepStrictEqual(deckCache.get("user-1").starredIds, [String(oid)]);
 });
 
 // ---------------------------------------------------------------------------

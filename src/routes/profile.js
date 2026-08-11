@@ -6,6 +6,7 @@ const {
 } = require("../utils/validation");
 const bcrypt = require("bcrypt");
 const validator = require("validator");
+const deckCache = require("../utils/deckCache");
 
 const profileRouter = express.Router();
 
@@ -32,6 +33,10 @@ profileRouter.patch("/profile/edit", userAuth, async (req, res) => {
     Object.keys(updates).forEach((key) => (loggedInUser[key] = updates[key]));
 
     await loggedInUser.save();
+
+    //Editing skills/location changes how this user is scored in the feed —
+    //drop the cached deck so the next request ranks with the new profile.
+    deckCache.invalidate(loggedInUser._id);
 
     // res.send(`${loggedInUser.firstName} your profile Updated Successfully`);
 

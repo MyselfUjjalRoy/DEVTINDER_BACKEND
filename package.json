@@ -7,6 +7,8 @@
     "test": "echo \"Error: no test specified\" && exit 1",
     "test:compat": "node scripts/score-sanity.js",
     "bench": "node scripts/benchmark.js",
+    "sync-indexes": "node scripts/sync-indexes.js",
+    "explain": "node scripts/explain-analysis.js",
     "start": "node src/app.js",
     "dev": "nodemon src/app.js"
   },

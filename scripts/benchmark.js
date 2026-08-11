@@ -148,9 +148,33 @@ const main = () => {
   console.log(`[4] Single compatibility calc:                  ${(microMs / ITERATIONS * 1000).toFixed(2)} µs`);
   console.log(`    -> even 100k scorings cost ${microMs.toFixed(0)} ms total`);
 
+  // 5. Feed refreshes WITH vs WITHOUT the deck cache. The cache stores the
+  //    ranked deck for TTL minutes, so N refreshes cost 1 build + N slices
+  //    instead of N full O(N) ranking passes.
+  const REFRESHES = 100;
+  t0 = performance.now();
+  for (let r = 0; r < REFRESHES; r += 1) {
+    rankFeed(viewer, candidates, { seed });
+  }
+  const withoutCacheMs = performance.now() - t0;
+
+  t0 = performance.now();
+  const cachedDeck = rankFeed(viewer, candidates, { seed });
+  for (let r = 0; r < REFRESHES; r += 1) {
+    cachedDeck.slice((r % PAGES) * PAGE_SIZE, (r % PAGES) * PAGE_SIZE + PAGE_SIZE);
+  }
+  const withCacheMs = performance.now() - t0;
+
+  console.log("");
+  console.log("[5] Deck cache (1 build + slices) vs re-ranking every refresh:");
+  console.log(`    ${REFRESHES} refreshes, NO cache:            ${withoutCacheMs.toFixed(1)} ms (${formatNumber(TOTAL_USERS)} users scored ${REFRESHES}x)`);
+  console.log(`    ${REFRESHES} refreshes, WITH deck cache:     ${withCacheMs.toFixed(1)} ms (1 build + ${REFRESHES} memory slices)`);
+  console.log(`    -> cache speedup: ${(withoutCacheMs / withCacheMs).toFixed(1)}x across ${REFRESHES} refreshes`);
+
   console.log("");
   console.log("Interpretation: the expensive ranking runs once, then pages are");
   console.log("cheap slices. The old feed paid the full O(N) cost on every page.");
+  console.log("The deck cache removes the repeated O(N) pass entirely.");
   console.log("=".repeat(64));
 };
 
