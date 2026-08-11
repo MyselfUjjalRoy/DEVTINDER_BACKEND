@@ -14,6 +14,7 @@ const userSchema = new mongoose.Schema(
     },
     lastName: {
       type: String,
+      maxLength: 50,
     },
     //If one field is being made as unique, MongoDB automatically makes that as the index of the DB
     emailId: {
@@ -103,40 +104,105 @@ const userSchema = new mongoose.Schema(
     photoURL: {
       type: String,
       default: "https://img.freepik.com/free-icon/user_318-563642.jpg",
+      maxLength: 500,
     },
     about: {
       type: String,
       default: "This is the about section of your profile",
+      //Bio is shown fully on the profile and clamped to 2 lines on cards;
+      //300 chars (~3 short sentences) keeps both views clean.
+      maxLength: 300,
     },
     skills: {
       type: [String],
+      validate: {
+        validator: (value) =>
+          Array.isArray(value) &&
+          value.length <= 10 &&
+          value.every(
+            (item) =>
+              typeof item === "string" &&
+              item.trim().length > 0 &&
+              item.trim().length <= 30,
+          ),
+        message:
+          "skills must be an array of at most 10 non-empty strings, each max 30 characters",
+      },
     },
     location: {
       city: {
         type: String,
         trim: true,
-        maxLength: 100,
+        maxLength: 60,
       },
       country: {
         type: String,
         trim: true,
-        maxLength: 100,
+        maxLength: 60,
       },
     },
     hobbies: {
       type: [String],
+      validate: {
+        validator: (value) =>
+          Array.isArray(value) &&
+          value.length <= 5 &&
+          value.every(
+            (item) =>
+              typeof item === "string" &&
+              item.trim().length > 0 &&
+              item.trim().length <= 30,
+          ),
+        message:
+          "hobbies must be an array of at most 5 non-empty strings, each max 30 characters",
+      },
     },
     likes: {
       type: [String],
+      validate: {
+        validator: (value) =>
+          Array.isArray(value) &&
+          value.length <= 5 &&
+          value.every(
+            (item) =>
+              typeof item === "string" &&
+              item.trim().length > 0 &&
+              item.trim().length <= 30,
+          ),
+        message:
+          "likes must be an array of at most 5 non-empty strings, each max 30 characters",
+      },
     },
     dislikes: {
       type: [String],
+      validate: {
+        validator: (value) =>
+          Array.isArray(value) &&
+          value.length <= 5 &&
+          value.every(
+            (item) =>
+              typeof item === "string" &&
+              item.trim().length > 0 &&
+              item.trim().length <= 30,
+          ),
+        message:
+          "dislikes must be an array of at most 5 non-empty strings, each max 30 characters",
+      },
     },
     photos: {
       type: [String],
       validate: {
-        validator: (value) => value.length <= 3,
-        message: "You can add at most 3 photos",
+        validator: (value) =>
+          Array.isArray(value) &&
+          value.length <= 3 &&
+          value.every(
+            (item) =>
+              typeof item === "string" &&
+              item.trim().length > 0 &&
+              item.trim().length <= 500,
+          ),
+        message:
+          "photos must be an array of at most 3 non-empty image URLs, each max 500 characters",
       },
     },
     isStudent: {
@@ -147,12 +213,12 @@ const userSchema = new mongoose.Schema(
       college: {
         type: String,
         trim: true,
-        maxLength: 150,
+        maxLength: 100,
       },
       degree: {
         type: String,
         trim: true,
-        maxLength: 150,
+        maxLength: 100,
       },
       passingYear: {
         type: Number,
@@ -167,12 +233,12 @@ const userSchema = new mongoose.Schema(
       company: {
         type: String,
         trim: true,
-        maxLength: 150,
+        maxLength: 100,
       },
       role: {
         type: String,
         trim: true,
-        maxLength: 150,
+        maxLength: 100,
       },
       experienceYears: {
         type: Number,
@@ -184,32 +250,32 @@ const userSchema = new mongoose.Schema(
       leetcode: {
         type: String,
         trim: true,
-        maxLength: 500,
+        maxLength: 200,
       },
       gfg: {
         type: String,
         trim: true,
-        maxLength: 500,
+        maxLength: 200,
       },
       codeforces: {
         type: String,
         trim: true,
-        maxLength: 500,
+        maxLength: 200,
       },
       codechef: {
         type: String,
         trim: true,
-        maxLength: 500,
+        maxLength: 200,
       },
       hackerrank: {
         type: String,
         trim: true,
-        maxLength: 500,
+        maxLength: 200,
       },
       codingninjas: {
         type: String,
         trim: true,
-        maxLength: 500,
+        maxLength: 200,
       },
     },
     github: {

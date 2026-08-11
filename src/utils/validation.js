@@ -3,12 +3,56 @@ const validator = require("validator");
 // Single source of truth for allowed genders (used by signup + profile edit)
 const GENDERS = ["male", "female", "others"];
 
+// ── UI-safe length limits ─────────────────────────────────────────────
+// These are sized so that whatever we accept will render beautifully on the
+// feed card and profile page (tags are pills, names/bios are single- or
+// double-line). They mirror the DB-level caps in the User model.
+
 // Max number of tags allowed per list-style field
 const MAX_ARRAY_SIZES = {
   skills: 10,
   hobbies: 5,
   likes: 5,
   dislikes: 5,
+};
+
+// Per-item max length for every tag-style string (skills, hobbies, likes,
+// dislikes). Tags render as small pills on the card — 30 chars keeps them
+// compact (e.g. "React Native Development", "Machine Learning Engineer").
+const MAX_TAG_LENGTH = 30;
+
+// Max length for a developer bio. Cards clamp it to 2 lines and the profile
+// shows it fully — 300 chars is ~2-3 sentences, long enough to feel real,
+// short enough to never turn the profile into a wall of text.
+const MAX_ABOUT_LENGTH = 300;
+
+// Max length for link/URL fields (also enforced by the User model).
+const MAX_LINK_LENGTH = 500;
+
+// Max length for coding-profile handles/URLs (shorter than social links —
+// they're compact usernames on the card).
+const MAX_CODE_LINK_LENGTH = 200;
+
+// Nested string caps — mirror the User model's maxLength so validation and
+// DB constraints never disagree. Sized for card display: city/country are
+// truncated to one line, education/work show as the card headline.
+const NESTED_STRING_MAX = {
+  location: 60,
+  education: 100,
+  work: 100,
+  codingProfiles: MAX_CODE_LINK_LENGTH,
+};
+
+// Per-field caps for top-level string fields.
+const STRING_FIELD_MAX = {
+  firstName: 50,
+  lastName: 50,
+  about: MAX_ABOUT_LENGTH,
+  photoURL: MAX_LINK_LENGTH,
+  github: MAX_LINK_LENGTH,
+  linkedin: MAX_LINK_LENGTH,
+  portfolio: MAX_LINK_LENGTH,
+  resumeURL: MAX_LINK_LENGTH,
 };
 
 // Computes the user's age from a YYYY-MM-DD date of birth
@@ -121,16 +165,28 @@ const validateProfileEditData = (req) => {
         !Array.isArray(value) ||
         value.some(
           (item) =>
-            typeof item !== "string" || !item.trim() || item.trim().length > 100,
+            typeof item !== "string" ||
+            !item.trim() ||
+            item.trim().length > MAX_TAG_LENGTH,
         )
       ) {
         throw new Error(
-          `${field} must be an array of non-empty strings (max 100 chars each)`,
+          `${field} must be an array of non-empty strings (max ${MAX_TAG_LENGTH} chars each)`,
         );
       }
       const maxLen = MAX_ARRAY_SIZES[field];
       if (maxLen && value.length > maxLen) {
         throw new Error(`${field} can have at most ${maxLen} items`);
+      }
+      //Reject duplicate tags (case-insensitive) so one profile can't list the
+      //same skill/hobby/like/dislike twice and inflate match scores.
+      const seen = new Set();
+      for (const item of value) {
+        const normalized = item.trim().toLowerCase();
+        if (seen.has(normalized)) {
+          throw new Error(`${field} cannot contain duplicate values`);
+        }
+        seen.add(normalized);
       }
       continue;
     }
@@ -139,6 +195,7 @@ const validateProfileEditData = (req) => {
       if (!Array.isArray(value) || value.length > 3) {
         throw new Error("photos must be an array of at most 3 images");
       }
+      const seen = new Set();
       for (const url of value) {
         if (typeof url !== "string" || !url.trim()) {
           throw new Error("Each photo must be a valid URL");
@@ -147,6 +204,10 @@ const validateProfileEditData = (req) => {
         if (u.length > 500) {
           throw new Error("Photo URL is too long");
         }
+        if (seen.has(u)) {
+          throw new Error("photos cannot contain duplicate URLs");
+        }
+        seen.add(u);
         if (!u.startsWith("/uploads/") && !validator.isURL(u, { require_protocol: true })) {
           throw new Error("Each photo must be a valid URL");
         }
@@ -189,8 +250,11 @@ const validateProfileEditData = (req) => {
           if (!Number.isFinite(exp) || exp < 0 || exp > 60) {
             throw new Error("experienceYears must be between 0 and 60");
           }
-        } else if (typeof v === "string" && v.length > 200) {
-          throw new Error(`${field}.${key} is too long`);
+        } else if (typeof v === "string") {
+          const cap = NESTED_STRING_MAX[field];
+          if (v.length > cap) {
+            throw new Error(`${field}.${key} is too long (max ${cap} chars)`);
+          }
         }
       }
       continue;
@@ -226,8 +290,9 @@ const validateProfileEditData = (req) => {
       throw new Error(`${field} must be a string`);
     }
 
-    if (value.length > 500) {
-      throw new Error(`${field} is too long`);
+    const fieldMax = STRING_FIELD_MAX[field] ?? MAX_LINK_LENGTH;
+    if (value.length > fieldMax) {
+      throw new Error(`${field} is too long (max ${fieldMax} chars)`);
     }
 
     if (LINK_FIELDS.includes(field) && value.includes(" ")) {
@@ -290,17 +355,30 @@ const sanitizeEditableFields = (body) => {
     }
 
     if (STRING_ARRAY_FIELDS.includes(field)) {
+      const seen = new Set();
       sanitized[field] = body[field]
         .map((item) => item.trim())
-        .filter((item) => item.length > 0)
+        .filter((item) => {
+          if (item.length === 0) return false;
+          const normalized = item.toLowerCase();
+          if (seen.has(normalized)) return false;
+          seen.add(normalized);
+          return true;
+        })
         .slice(0, MAX_ARRAY_SIZES[field]);
       continue;
     }
 
     if (field === "photos") {
+      const seen = new Set();
       sanitized[field] = body[field]
         .map((item) => item.trim())
-        .filter((item) => item.length > 0)
+        .filter((item) => {
+          if (item.length === 0) return false;
+          if (seen.has(item)) return false;
+          seen.add(item);
+          return true;
+        })
         .slice(0, 3);
       continue;
     }
