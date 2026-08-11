@@ -20,7 +20,7 @@
  *   4. jitter      — deterministic randomness (variety, daily reseed)
  */
 
-const { computeCompatibility } = require("./compatibility");
+const { computeCompatibility, computeComplementarity } = require("./compatibility");
 
 // FNV-1a string hash -> unsigned 32-bit. Deterministic across runs/processes.
 const hashString = (str) => {
@@ -51,16 +51,26 @@ const deterministicJitter = (candidateId, seed) => {
  *   - starredIds:  ObjectIds of users who super-connected with the viewer recently
  *   - preferGender: optional "male"/"female" to nudge ahead among equal scores
  *   - seed:        string used for the deterministic tie-break jitter
+ *   - mode:        "similar" (default) or "complementary" — which scorer the
+ *                  deck is ranked by. The per-day jitter seed is unchanged, so
+ *                  both modes paginate deterministically.
  *
  * @returns {object[]} the same candidate objects, each with a `score` property,
  *                     sorted best-first.
  */
 const rankFeed = (viewer, candidates, options = {}) => {
-  const { starredIds = [], preferGender = null, seed = "default" } = options;
+  const {
+    starredIds = [],
+    preferGender = null,
+    seed = "default",
+    mode = "similar",
+  } = options;
 
   const starred = new Set(starredIds.map((id) => String(id)));
   const prefer =
     typeof preferGender === "string" ? preferGender.toLowerCase() : null;
+  const scorer =
+    mode === "complementary" ? computeComplementarity : computeCompatibility;
 
   const scored = candidates.map((candidate) => {
     const id = String(candidate._id);
@@ -71,7 +81,7 @@ const rankFeed = (viewer, candidates, options = {}) => {
       genderNudge = candidateGender === prefer ? 0 : 1;
     }
 
-    const compat = computeCompatibility(viewer, candidate);
+    const compat = scorer(viewer, candidate);
 
     return {
       candidate,

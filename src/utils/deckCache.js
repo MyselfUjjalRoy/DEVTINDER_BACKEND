@@ -27,8 +27,12 @@
  *   15 minutes is invisible to a user browsing the feed.
  *
  * KEYING:
- *   cacheKey = `${userId}|${YYYY-MM-DD}`. The per-day deterministic jitter
- *   (feedRanking) reseeds at midnight, so a new day must build a fresh deck.
+ *   cacheKey = `${userId}|${YYYY-MM-DD}|${mode}`. The per-day deterministic
+ *   jitter (feedRanking) reseeds at midnight, so a new day must build a fresh
+ *   deck. The mode ("similar" | "complementary") is part of the key because
+ *   the two modes rank the same pool with different scores — switching modes
+ *   must not leak one deck's order into the other. Invalidation clears every
+ *   mode for a user.
  *
  * STATS:
  *   hits / misses are tracked for observability — the /feed response sets an
@@ -46,14 +50,15 @@ let misses = 0;
 // The per-day seed in feedRanking uses the viewer id + UTC date.
 const todayKey = () => new Date().toISOString().slice(0, 10);
 
-const cacheKey = (userId) => `${String(userId)}|${todayKey()}`;
+const cacheKey = (userId, mode = "similar") =>
+  `${String(userId)}|${todayKey()}|${mode}`;
 
 /**
  * Returns the cached deck entry for a user, or null on miss/expiry.
  * @returns {{deck: object[], starredIds: string[]} | null}
  */
-const get = (userId) => {
-  const key = cacheKey(userId);
+const get = (userId, mode = "similar") => {
+  const key = cacheKey(userId, mode);
   const entry = cache.get(key);
   if (!entry) {
     misses += 1;
@@ -73,9 +78,10 @@ const get = (userId) => {
  * @param {string|object} userId
  * @param {object[]} deck         the array rankFeed() returned (ranked best-first)
  * @param {Array} starredIds      users who super-connected with the viewer
+ * @param {string} [mode]         "similar" | "complementary" (default "similar")
  */
-const set = (userId, deck, starredIds = []) => {
-  const key = cacheKey(userId);
+const set = (userId, deck, starredIds = [], mode = "similar") => {
+  const key = cacheKey(userId, mode);
   cache.set(key, {
     deck,
     starredIds: starredIds.map((id) => String(id)),
@@ -89,10 +95,14 @@ const set = (userId, deck, starredIds = []) => {
 };
 
 /**
- * Drops a user's cached deck (call when any ranking input changed).
+ * Drops a user's cached decks in every mode (call when any ranking input
+ * changed — both similar and complementary decks depend on the same inputs).
  */
 const invalidate = (userId) => {
-  cache.delete(cacheKey(userId));
+  const prefix = `${String(userId)}|`;
+  for (const key of cache.keys()) {
+    if (key.startsWith(prefix)) cache.delete(key);
+  }
 };
 
 const stats = () => {

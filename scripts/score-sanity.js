@@ -485,6 +485,220 @@ test("affinity only amplifies the skills actually liked", () => {
 });
 
 // ---------------------------------------------------------------------------
+// computeComplementarity (Feature B: the co-founder mode)
+// ---------------------------------------------------------------------------
+
+const {
+  computeComplementarity,
+  DEFAULT_COMPLEMENTARITY_WEIGHTS,
+  MIN_OVERLAP_FOR_COVERAGE,
+} = require("../src/utils/compatibility");
+
+test("complementarity rewards 'shares a bit, brings a lot' over clones and strangers", () => {
+  const me = fullProfile(); // React/Node/MongoDB, Bangalore
+  const bitAndLot = fullProfile({ skills: ["React", "Go", "Rust", "Dart", "Java"], location: { city: "Bangalore" } });
+  const clone = fullProfile({ location: { city: "Bangalore" } }); // identical skills
+  const stranger = fullProfile({ skills: ["Go", "Rust", "Dart"], location: { city: "Bangalore" } }); // zero shared
+  const bit = computeComplementarity(me, bitAndLot).total;
+  const same = computeComplementarity(me, clone).total;
+  const none = computeComplementarity(me, stranger).total;
+  assert.ok(bit > same, `expected bit-and-lot (${bit}) > clone (${same})`);
+  assert.ok(bit > none, `expected bit-and-lot (${bit}) > stranger (${none})`);
+});
+
+test("complementarity never crashes on missing data and stays 0-100", () => {
+  assert.strictEqual(computeComplementarity(null, null).total, 50);
+  assert.strictEqual(computeComplementarity({}, {}).total, 50);
+  assert.ok(isFiniteInRange(computeComplementarity({ skills: ["Go"] }, {}).total, 0, 100));
+  assert.ok(isFiniteInRange(computeComplementarity({}, { skills: ["Go"] }).total, 0, 100));
+});
+
+test("complementarity breakdown exposes coverage, overlap and location", () => {
+  const me = fullProfile();
+  const candidate = fullProfile({ skills: ["React", "Go"], location: { city: "Mumbai" } });
+  const result = computeComplementarity(me, candidate);
+  const keys = Object.keys(result.breakdown).sort();
+  assert.deepStrictEqual(keys, ["coverage", "location", "overlap"]);
+  const sum = Object.values(result.breakdown).reduce((a, s) => a + s.contribution, 0);
+  assert.ok(Math.abs(sum - result.raw / 100) < 0.01);
+  assert.ok(isFiniteInRange(result.total, 0, 100));
+});
+
+test("complementarity default weights are normalized to sum 1", () => {
+  const sum = Object.values(DEFAULT_COMPLEMENTARITY_WEIGHTS).reduce((a, b) => a + b, 0);
+  assert.ok(Math.abs(sum - 1) < 1e-9);
+  assert.ok(MIN_OVERLAP_FOR_COVERAGE > 0);
+});
+
+test("rankFeed in complementary mode reorders by the complementary scorer", () => {
+  const viewer = fullProfile(); // React/Node/MongoDB, Bangalore
+  const gapFiller = makeCandidate("a", { skills: ["React", "Go", "Rust"], city: "Bangalore" });
+  const clone = makeCandidate("b", { skills: ["React", "Node", "MongoDB"], city: "Mumbai" });
+  const similar = rankFeed(viewer, [gapFiller, clone], { seed: "s" });
+  const complementary = rankFeed(viewer, [gapFiller, clone], { seed: "s", mode: "complementary" });
+  assert.strictEqual(String(similar[0]._id), "b"); // clone scores higher on similarity
+  assert.strictEqual(String(complementary[0]._id), "a"); // gap-filler wins complementarity
+  assert.ok(complementary[0].breakdown.coverage && typeof complementary[0].breakdown.coverage.value === "number");
+});
+
+// ---------------------------------------------------------------------------
+// matchReasons (Feature A1: "why we matched" explainability)
+// ---------------------------------------------------------------------------
+
+const {
+  generateMatchReasons,
+  formatSkillList,
+  sharedSkills,
+  MAX_REASONS,
+} = require("../src/utils/matchReasons");
+
+test("shared skills with the viewer produce a 'you both know' reason", () => {
+  const me = fullProfile(); // React/Node/MongoDB, Bangalore
+  const candidate = makeCandidate("a", { skills: ["React", "Go"], city: "Mumbai" });
+  const reasons = generateMatchReasons(me, candidate);
+  assert.ok(reasons.some((r) => r.includes("You both know") && r.includes("React")));
+});
+
+test("aliased skill spellings still count as shared skills", () => {
+  const me = fullProfile();
+  const candidate = makeCandidate("a", { skills: ["react js", "node.js"], city: "Mumbai" });
+  const reasons = generateMatchReasons(me, candidate);
+  assert.ok(reasons.some((r) => r.includes("React")));
+});
+
+test("learned affinity adds a 'liked developers who know' reason", () => {
+  const me = fullProfile({ preferenceSkills: new Map([["react", 2]]) });
+  const candidate = makeCandidate("a", { skills: ["React"], city: "Mumbai" });
+  const reasons = generateMatchReasons(me, candidate);
+  assert.ok(reasons.some((r) => r.includes("You've liked developers who know React")));
+});
+
+test("same city adds a location reason (viewer's spelling wins)", () => {
+  const me = fullProfile(); // Bangalore
+  const candidate = makeCandidate("a", { skills: ["Go"], city: "bangalore" });
+  const reasons = generateMatchReasons(me, candidate);
+  assert.ok(reasons.some((r) => r.includes("You're both in Bangalore")));
+});
+
+test("starredYou reason is listed first", () => {
+  const me = fullProfile();
+  const candidate = makeCandidate("a", { skills: ["React", "Node", "MongoDB"], city: "Bangalore" });
+  const reasons = generateMatchReasons(me, candidate, { starredYou: true });
+  assert.strictEqual(reasons[0], "Super-connected with your profile ⭐");
+});
+
+test("nothing in common falls back to a strong-match reason, never an empty list", () => {
+  const me = fullProfile();
+  const candidate = makeCandidate("a", { skills: ["Go"], city: "Mumbai" });
+  const reasons = generateMatchReasons(me, candidate);
+  assert.ok(reasons.length > 0);
+  assert.ok(reasons[0].includes("Strong overall match"));
+});
+
+test("reasons are capped at MAX_REASONS and never duplicated", () => {
+  const me = fullProfile();
+  const candidate = makeCandidate("a", { skills: ["React", "Node", "MongoDB"], city: "Bangalore" });
+  const reasons = generateMatchReasons(me, candidate, { starredYou: true });
+  assert.ok(reasons.length <= MAX_REASONS);
+  assert.strictEqual(new Set(reasons).size, reasons.length);
+});
+
+test("formatSkillList renders 1, 2 and 3+ skills readably", () => {
+  assert.strictEqual(formatSkillList(["React"]), "React");
+  assert.strictEqual(formatSkillList(["React", "node"]), "React and Node.js");
+  const three = formatSkillList(["React", "node", "Go"]);
+  assert.ok(three.includes("React") && three.includes("and 1 more"));
+});
+
+test("sharedSkills normalizes aliases across both profiles", () => {
+  const me = fullProfile();
+  assert.deepStrictEqual(sharedSkills(me, { skills: ["react.js", "nodejs", "Go"] }), ["react", "node"]);
+  assert.deepStrictEqual(sharedSkills(me, {}), []);
+});
+
+test("matchReasons never throws on junk or empty profiles", () => {
+  assert.strictEqual(generateMatchReasons(null, null)[0], "Strong overall match (high compatibility)");
+  assert.strictEqual(generateMatchReasons({}, {})[0], "Strong overall match (high compatibility)");
+  assert.ok(Array.isArray(generateMatchReasons({ skills: null }, { skills: "x" })));
+  assert.ok(Array.isArray(generateMatchReasons({}, null, { starredYou: true })));
+});
+
+test("matchReasons adds a gap-filling reason in complementary mode", () => {
+  const me = fullProfile(); // React/Node/MongoDB
+  const candidate = makeCandidate("a", { skills: ["React", "Go", "Rust"], city: "Mumbai" });
+  const reasons = generateMatchReasons(me, candidate, { mode: "complementary" });
+  assert.ok(reasons.some((r) => r.includes("fills your stack's gaps")));
+  // Similar mode never mentions gap-filling.
+  const similarReasons = generateMatchReasons(me, candidate, { mode: "similar" });
+  assert.ok(!similarReasons.some((r) => r.includes("gaps")));
+});
+
+// ---------------------------------------------------------------------------
+// ai.js icebreaker fallback (Feature A2: AI openers, deterministic degrades)
+// ---------------------------------------------------------------------------
+
+const {
+  fallbackIcebreaker,
+  buildPrompt,
+  sanitize,
+} = require("../src/utils/ai");
+
+test("fallbackIcebreaker mentions shared skills when they exist", () => {
+  const me = fullProfile({ firstName: "Aarav" }); // React/Node/MongoDB, Bangalore
+  const other = fullProfile({ firstName: "Priya", skills: ["react js", "Go"] });
+  const text = fallbackIcebreaker(me, other);
+  assert.ok(text.includes("React"));
+});
+
+test("fallbackIcebreaker falls back to city, then to a generic opener", () => {
+  const noSharedSkills = fallbackIcebreaker(
+    fullProfile({ skills: ["Go"] }),
+    fullProfile({ skills: ["Rust"], location: { city: "Mumbai" } }),
+  );
+  assert.ok(noSharedSkills.includes("Mumbai"));
+
+  const generic = fallbackIcebreaker(null, null);
+  assert.ok(generic.includes("matched") || generic.includes("working on"));
+});
+
+test("buildPrompt only contains structured fields, never free-form bio", () => {
+  const me = { firstName: "A", skills: ["React"], work: { role: "SDE" } };
+  const other = { firstName: "B", location: { city: "Delhi" } };
+  const prompt = buildPrompt(me, other);
+  assert.ok(prompt.includes("Skills: React"));
+  assert.ok(prompt.includes("City: Delhi"));
+  assert.ok(!prompt.includes("undefined"));
+});
+
+test("sanitize collapses whitespace and trims", () => {
+  assert.strictEqual(sanitize("  Hello\n  world!  \n"), "Hello world!");
+  assert.strictEqual(sanitize(null), "");
+  assert.strictEqual(sanitize(undefined), "");
+});
+
+// ---------------------------------------------------------------------------
+// icebreaker model: canonical pair key (Feature A2)
+// ---------------------------------------------------------------------------
+
+const Icebreaker = require("../src/models/icebreaker");
+
+test("canonicalPair always orders ids deterministically", () => {
+  const { Types } = require("mongoose");
+  const a = new Types.ObjectId();
+  const b = new Types.ObjectId();
+  const ab = Icebreaker.canonicalPair(a, b);
+  const ba = Icebreaker.canonicalPair(b, a);
+  assert.deepStrictEqual(ab, ba);
+  assert.ok(String(ab[0]) <= String(ab[1]));
+});
+
+test("canonicalPair handles string ids of different lengths", () => {
+  const pair = Icebreaker.canonicalPair("999", "aaaa");
+  assert.deepStrictEqual(pair, ["999", "aaaa"]);
+  assert.deepStrictEqual(Icebreaker.canonicalPair("aaaa", "999"), ["999", "aaaa"]);
+});
+
+// ---------------------------------------------------------------------------
 // deckCache (Step 7: the ranked-deck cache)
 // ---------------------------------------------------------------------------
 
@@ -517,14 +731,31 @@ test("deckCache invalidate drops the entry and forces a rebuild", () => {
   assert.strictEqual(deckCache.stats().hitRate, 0.5); // 1 hit + 1 miss
 });
 
-test("deckCache key is per user AND per day (day rollover reseeds the jitter)", () => {
+test("deckCache key is per user AND per day AND per mode", () => {
   const { cacheKey } = require("../src/utils/deckCache");
   assert.notStrictEqual(
     cacheKey("user-1").slice(0, "user-1".length),
     cacheKey("user-2").slice(0, "user-2".length),
   );
-  assert.ok(cacheKey("user-1").endsWith(new Date().toISOString().slice(0, 10)));
-  assert.notStrictEqual(cacheKey("user-1"), `user-1|2000-01-01`);
+  const date = new Date().toISOString().slice(0, 10);
+  assert.ok(cacheKey("user-1").includes(date));
+  assert.strictEqual(cacheKey("user-1"), `user-1|${date}|similar`);
+  assert.notStrictEqual(
+    cacheKey("user-1", "complementary"),
+    cacheKey("user-1", "similar"),
+  );
+  assert.ok(cacheKey("user-1", "complementary").endsWith("complementary"));
+});
+
+test("deckCache modes are isolated and invalidate clears both", () => {
+  deckCache.clear();
+  deckCache.set("user-1", [{ _id: "a" }], [], "similar");
+  deckCache.set("user-1", [{ _id: "b" }], [], "complementary");
+  assert.strictEqual(deckCache.get("user-1", "similar").deck[0]._id, "a");
+  assert.strictEqual(deckCache.get("user-1", "complementary").deck[0]._id, "b");
+  deckCache.invalidate("user-1");
+  assert.strictEqual(deckCache.get("user-1", "similar"), null);
+  assert.strictEqual(deckCache.get("user-1", "complementary"), null);
 });
 
 test("deckCache set/get round-trips ObjectIds as string starred ids", () => {

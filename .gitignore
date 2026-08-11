@@ -2,3 +2,6 @@ node_modules
 .env
 learnings.md
 uploads/
+# runtime logs
+app.log
+app-err.log

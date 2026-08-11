@@ -3,6 +3,9 @@ const { userAuth } = require("../middlewares/auth");
 const mongoose = require("mongoose");
 const Chat = require("../models/chat");
 const ConnectionRequest = require("../models/connectionRequest");
+const Icebreaker = require("../models/icebreaker");
+const User = require("../models/user");
+const { generateIcebreaker } = require("../utils/ai");
 
 const chatRouter = express.Router();
 
@@ -86,6 +89,86 @@ chatRouter.get("/chat/:targetUserId", userAuth, async (req, res) => {
     });
   } catch (error) {
     console.error("Error fetching chat:", error);
+    res
+      .status(500)
+      .json({ message: "Internal server error", error: error.message });
+  }
+});
+
+const ICEBREAKER_PROFILE_FIELDS =
+  "firstName skills location work github";
+
+/**
+ * GET /icebreaker/:targetUserId — one shared opening message for a matched
+ * pair. Generated once, lazily, then cached forever (canonical pair key).
+ * Degrades to a rule-based opener when no AI key is configured.
+ */
+chatRouter.get("/icebreaker/:targetUserId", userAuth, async (req, res) => {
+  const { targetUserId } = req.params;
+  const userId = req.user._id;
+
+  try {
+    if (
+      !mongoose.Types.ObjectId.isValid(userId) ||
+      !mongoose.Types.ObjectId.isValid(targetUserId)
+    ) {
+      return res.status(400).json({ message: "Invalid user IDs" });
+    }
+
+    if (targetUserId === String(userId)) {
+      return res.status(400).json({ message: "Cannot icebreak yourself" });
+    }
+
+    const userObjectId = new mongoose.Types.ObjectId(userId);
+    const targetUserObjectId = new mongoose.Types.ObjectId(targetUserId);
+
+    const connectionExists = await ConnectionRequest.findOne({
+      $or: [
+        {
+          fromUserId: userObjectId,
+          toUserId: targetUserObjectId,
+          status: "accepted",
+        },
+        {
+          fromUserId: targetUserObjectId,
+          toUserId: userObjectId,
+          status: "accepted",
+        },
+      ],
+    });
+
+    if (!connectionExists) {
+      return res
+        .status(400)
+        .json({ message: "You are not connected with this user!" });
+    }
+
+    const [userA, userB] = Icebreaker.canonicalPair(
+      userObjectId,
+      targetUserObjectId,
+    );
+
+    let icebreaker = await Icebreaker.findOne({ userA, userB });
+    if (!icebreaker) {
+      const [meDoc, otherDoc] = await Promise.all([
+        User.findById(userA).select(ICEBREAKER_PROFILE_FIELDS).lean(),
+        User.findById(userB).select(ICEBREAKER_PROFILE_FIELDS).lean(),
+      ]);
+
+      const generated = await generateIcebreaker(meDoc, otherDoc);
+
+      // Upsert with $setOnInsert so a concurrent duplicate generation can
+      // never create a second document (unique index is the final guard).
+      icebreaker = await Icebreaker.findOneAndUpdate(
+        { userA, userB },
+        { $setOnInsert: { text: generated.text, source: generated.source } },
+        { upsert: true, new: true },
+      );
+    }
+
+    res.json({ data: { text: icebreaker.text, source: icebreaker.source } });
+  } catch (error) {
+    console.error("Error generating icebreaker:", error);
     res
       .status(500)
       .json({ message: "Internal server error", error: error.message });

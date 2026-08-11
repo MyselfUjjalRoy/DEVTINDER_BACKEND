@@ -42,6 +42,13 @@ const notificationSchema = new mongoose.Schema(
       type: Boolean,
       default: false,
     },
+    // Soft-delete: read notifications the user dismissed (or cleared via
+    // "Mark all read") stay in the DB for audit but are filtered out of the
+    // tray, so they never reappear after a refetch.
+    dismissed: {
+      type: Boolean,
+      default: false,
+    },
   },
   { timestamps: true },
 );

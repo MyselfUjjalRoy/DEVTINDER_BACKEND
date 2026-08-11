@@ -292,12 +292,120 @@ const computeCompatibility = (me, candidate, weights = DEFAULT_WEIGHTS) => {
   };
 };
 
+/**
+ * Complementarity mode — the "find your co-founder" signal.
+ *
+ * Similarity answers "who is like me?"; complementarity answers "who brings
+ * what I'm missing while still being someone I could build with?"
+ *
+ * Three signals:
+ *   1. coverage  — the fraction of the candidate's skills that are NEW to the
+ *                  viewer. This is the gap-filling signal.
+ *   2. overlap   — how much they share (preference-weighted), the "can we
+ *                  even collaborate?" signal.
+ *   3. location  — same as similarity mode.
+ *
+ * A total stranger who shares nothing scores badly on overlap, and their
+ * "new" skills are dampened (see MIN_OVERLAP_FOR_COVERAGE) because novelty
+ * without a shared base isn't complementary — it's incommunicable. The sweet
+ * spot is "shares a little, brings a lot".
+ */
+const DEFAULT_COMPLEMENTARITY_WEIGHTS = {
+  coverage: 0.55,
+  overlap: 0.25,
+  location: 0.2,
+};
+
+// Below this overlap the coverage signal is scaled down smoothly. No hard
+// cutoff — just a gentler reward for novelty from near-strangers.
+const MIN_OVERLAP_FOR_COVERAGE = 0.2;
+
+const computeComplementarity = (
+  me,
+  candidate,
+  weights = DEFAULT_COMPLEMENTARITY_WEIGHTS,
+) => {
+  const effectiveWeights = normalizeWeights(weights);
+
+  const meSkills = normalizeSkills(me && me.skills);
+  const candidateSkills = normalizeSkills(candidate && candidate.skills);
+  const skillsHasData = meSkills.length > 0 && candidateSkills.length > 0;
+
+  const overlapValue = skillsHasData
+    ? weightedSkillOverlap(meSkills, candidateSkills, me)
+    : NEUTRAL_VALUE;
+
+  const meSet = new Set(meSkills);
+  const newCount = candidateSkills.filter((skill) => !meSet.has(skill)).length;
+  const coverageValue = skillsHasData && candidateSkills.length > 0
+    ? newCount / candidateSkills.length
+    : NEUTRAL_VALUE;
+
+  const effectiveCoverage = skillsHasData
+    ? coverageValue * Math.min(1, overlapValue / MIN_OVERLAP_FOR_COVERAGE)
+    : NEUTRAL_VALUE;
+
+  const meCity = me && me.location && me.location.city;
+  const candidateCity = candidate && candidate.location && candidate.location.city;
+  const locationValue = locationScore(meCity, candidateCity);
+  const locationHasData = locationValue !== null;
+
+  const signals = {
+    coverage: buildSignal({
+      baseWeight: effectiveWeights.coverage,
+      value: effectiveCoverage,
+      hasData: skillsHasData,
+    }),
+    overlap: buildSignal({
+      baseWeight: effectiveWeights.overlap,
+      value: overlapValue,
+      hasData: skillsHasData,
+    }),
+    location: buildSignal({
+      baseWeight: effectiveWeights.location,
+      value: locationHasData ? locationValue : NEUTRAL_VALUE,
+      hasData: locationHasData,
+    }),
+  };
+
+  let weightedSum = 0;
+  let totalWeight = 0;
+  for (const signal of Object.values(signals)) {
+    weightedSum += signal.value * signal.weight;
+    totalWeight += signal.weight;
+  }
+
+  const raw = totalWeight > 0 ? (weightedSum / totalWeight) * 100 : DEFAULT_TOTAL;
+  const clamped = clamp(raw, 0, 100);
+
+  const breakdown = {};
+  for (const [key, signal] of Object.entries(signals)) {
+    breakdown[key] = {
+      value: Math.round(clamp(signal.value, 0, 1) * 100),
+      weight: roundTo(signal.weight, 4),
+      hasData: signal.hasData,
+      contribution:
+        totalWeight > 0
+          ? roundTo((signal.value * signal.weight) / totalWeight, 4)
+          : 0,
+    };
+  }
+
+  return {
+    total: Math.round(clamped),
+    raw: clamped,
+    breakdown,
+  };
+};
+
 module.exports = {
   DEFAULT_WEIGHTS,
   MISSING_DATA_DAMPEN,
   NEUTRAL_VALUE,
   DEFAULT_TOTAL,
   SKILL_PREFERENCE_DEFAULT,
+  DEFAULT_COMPLEMENTARITY_WEIGHTS,
+  MIN_OVERLAP_FOR_COVERAGE,
   normalizeSkill,
   normalizeSkills,
   jaccard,
@@ -305,4 +413,5 @@ module.exports = {
   weightedSkillOverlap,
   normalizeWeights,
   computeCompatibility,
+  computeComplementarity,
 };

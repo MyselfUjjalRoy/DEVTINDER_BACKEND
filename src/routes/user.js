@@ -14,6 +14,7 @@ const {
   fetchLeetCodeStats,
 } = require("../utils/leetcode");
 const deckCache = require("../utils/deckCache");
+const { generateMatchReasons } = require("../utils/matchReasons");
 
 const USER_SAFE_DATA =
   "firstName lastName photoURL photos age dob gender about skills " +
@@ -172,6 +173,11 @@ userRouter.get("/feed", userAuth, async (req, res) => {
 
     const skipUsers = (page - 1) * limit;
 
+    //MODE: "similar" (who is like me, default) vs "complementary" (who fills
+    //my stack's gaps — the co-founder view). Ranked with a different scorer
+    //and cached under a mode-scoped key.
+    const mode = req.query.mode === "complementary" ? "complementary" : "similar";
+
     //CACHED DECK: the ranked deck is expensive to build (a full O(N) scoring
     //pass). It is cached per user for TTL_MS and invalidated on every swipe /
     //super connect / request review / profile edit — i.e. exactly when the
@@ -180,7 +186,7 @@ userRouter.get("/feed", userAuth, async (req, res) => {
     let superLikeFromIds = [];
     let cacheStatus = "MISS";
 
-    const cached = deckCache.get(loggedInUser._id);
+    const cached = deckCache.get(loggedInUser._id, mode);
     if (cached) {
       ranked = cached.deck;
       superLikeFromIds = cached.starredIds;
@@ -239,9 +245,10 @@ userRouter.get("/feed", userAuth, async (req, res) => {
         starredIds: superLikeFromIds,
         preferGender,
         seed,
+        mode,
       });
 
-      deckCache.set(loggedInUser._id, ranked, superLikeFromIds);
+      deckCache.set(loggedInUser._id, ranked, superLikeFromIds, mode);
     }
 
     const pageCandidates = ranked.slice(skipUsers, skipUsers + limit);
@@ -261,6 +268,10 @@ userRouter.get("/feed", userAuth, async (req, res) => {
         safe.starredYou = starredIds.has(String(candidate._id));
         safe.score = candidate.score;
         safe.breakdown = candidate.breakdown;
+        safe.reasons = generateMatchReasons(loggedInUser, candidate, {
+          starredYou: safe.starredYou,
+          mode,
+        });
         return safe;
       })
       .filter(Boolean);
